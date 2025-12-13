@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+requests
+beautifulsoup4
+apscheduler
+streamlit
+pandas
+plotly
+matplotlib
+requests
