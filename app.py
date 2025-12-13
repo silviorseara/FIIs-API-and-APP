@@ -23,15 +23,14 @@ COL_PRECO = 8    # Coluna I (Vem do GoogleFinance)
 COL_DY = 17      # Coluna R (Vem do Script)
 # ==========================================
 
-st.set_page_config(page_title="Carteira Inteligente FIIs", layout="wide", page_icon="🏢")
+# Configuração inicial do Streamlit
+st.set_page_config(page_title="Carteira FIIs Master", layout="wide", page_icon="🏢")
 
-# CSS Ajustado
+# CSS para métricas e tabelas
 st.markdown("""
 <style>
     .metric-card { background-color: #f9f9f9; border-radius: 8px; padding: 15px; border: 1px solid #eee; }
     [data-testid="stMetricValue"] { font-size: 1.5rem; color: #0068c9; }
-    /* Botão de copiar estilo */
-    .stCode { font-family: monospace; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -44,7 +43,6 @@ def carregar_dados():
         for index, row in df.iterrows():
             try:
                 raw_ticker = str(row[COL_TICKER]).strip().upper()
-                # Validação Regex
                 if not re.match(r'^[A-Z]{4}11[B]?$', raw_ticker): continue
 
                 def get_float(val):
@@ -61,7 +59,6 @@ def carregar_dados():
                     "Preço Atual": get_float(row[COL_PRECO]),
                     "VP": get_float(row[COL_VP]),
                     "DY (12m)": get_float(row[COL_DY]),
-                    # Link Automático para o Investidor10
                     "Link": f"https://investidor10.com.br/fiis/{raw_ticker.lower()}/"
                 }
                 
@@ -72,7 +69,6 @@ def carregar_dados():
         df_final = pd.DataFrame(dados_limpos)
         if df_final.empty: return df_final
 
-        # Remover Duplicatas
         df_final = df_final.drop_duplicates(subset=["Ticker"], keep="first")
 
         # Cálculos
@@ -91,95 +87,110 @@ def carregar_dados():
         st.error(f"Erro: {e}")
         return pd.DataFrame()
 
-# --- SIDEBAR: CONSULTOR IA ---
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("🤖 Consultor IA")
-    st.info("Gere um prompt detalhado com seus dados para colar no ChatGPT ou Gemini.")
-    
-    if st.button("🧠 Gerar Análise da Carteira"):
+    st.header("Ferramentas")
+    if st.button("🧠 Gerar Prompt para IA"):
         st.session_state['gerar_ia'] = True
     
+    st.divider()
     if st.button("🔄 Atualizar Dados"):
         st.cache_data.clear()
         st.rerun()
 
 # --- APP PRINCIPAL ---
-st.title("🏢 Dashboard FIIs Pro")
+st.title("🏢 Dashboard FIIs Integrado")
 
 df = carregar_dados()
 
 if not df.empty:
-    # LÓGICA DO CONSULTOR IA (Aparece no topo se clicado)
+    # --- ÁREA DE IA (Correção do Erro) ---
     if st.session_state.get('gerar_ia'):
-        with st.expander("🧠 Copie este texto e cole no ChatGPT/Gemini:", expanded=True):
-            # Prepara os dados resumidos para a IA não se perder
-            resumo_ia = df[["Ticker", "Qtd", "Preço Médio", "Preço Atual", "P/VP", "DY (12m)"]].to_markdown(index=False)
-            total_val = df["Valor Atual"].sum()
-            
+        with st.expander("🧠 Copie para o ChatGPT/Gemini:", expanded=True):
+            # Tenta usar markdown se tabulate estiver instalado, senão usa string simples
+            try:
+                resumo_ia = df[["Ticker", "Qtd", "Preço Médio", "Preço Atual", "P/VP", "DY (12m)"]].to_markdown(index=False)
+            except ImportError:
+                resumo_ia = df[["Ticker", "Qtd", "Preço Médio", "Preço Atual", "P/VP", "DY (12m)"]].to_string(index=False)
+                st.warning("Dica: Adicione 'tabulate' ao requirements.txt para uma formatação melhor.")
+
             prompt = f"""
-Atue como um Consultor Financeiro Especialista em Fundos Imobiliários (FIIs) brasileiros.
-Analise a minha carteira abaixo e me dê um feedback crítico e sugestões de otimização.
-
-DADOS DA CARTEIRA:
-Patrimônio Total: R$ {total_val:,.2f}
+Atue como Consultor Financeiro. Analise minha carteira de FIIs:
+Patrimônio: R$ {df["Valor Atual"].sum():,.2f}
 {resumo_ia}
-
-PEDIDOS:
-1. Analise a diversificação (risco concentrado?).
-2. Identifique oportunidades (FIIs baratos com P/VP < 1.0 e bons fundamentos).
-3. Identifique sinais de alerta (P/VP muito alto ou DY suspeito).
-4. Sugira 3 ações práticas para melhorar a carteira.
+1. Analise a diversificação.
+2. Aponte FIIs descontados (P/VP < 1) mas sólidos.
+3. Sugira otimizações.
             """
             st.code(prompt, language="text")
-            st.success("Texto gerado! Copie acima (ícone no canto direito do bloco) e cole na sua IA favorita.")
 
-    # KPI's
+    # --- KPIs ---
     patrimonio = df["Valor Atual"].sum()
     investido = df["Total Investido"].sum()
     lucro = patrimonio - investido
     rentabilidade = (lucro / investido)
     renda_est = df["Renda Mensal Est."].sum()
+    dy_medio_ponderado = (renda_est * 12) / patrimonio
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Patrimônio", f"R$ {patrimonio:,.2f}")
     c2.metric("Lucro / Prejuízo", f"R$ {lucro:,.2f}", delta=f"{rentabilidade:.2%}")
     c3.metric("Renda Mensal (Est.)", f"R$ {renda_est:,.2f}")
-    # Mostra o DY Médio Ponderado da carteira
-    dy_medio_ponderado = (df["Renda Mensal Est."].sum() * 12) / patrimonio
     c4.metric("DY Carteira (Anual)", f"{dy_medio_ponderado:.2%}")
 
     st.divider()
 
-    # GRÁFICOS
-    g1, g2 = st.columns([2, 1])
-    with g1:
-        st.subheader("Oportunidades (P/VP x DY)")
-        # Gráfico de dispersão avançado
-        fig = px.scatter(df, x="P/VP", y="DY (12m)", size="Valor Atual", color="Ticker",
-                         hover_name="Ticker", text="Ticker", 
-                         title="Quadrante Mágico: Busque P/VP < 1 e DY Alto")
-        fig.add_hline(y=df["DY (12m)"].mean(), line_dash="dot", annotation_text="Média DY")
-        fig.add_vline(x=1, line_dash="dot", annotation_text="Valor Justo")
-        st.plotly_chart(fig, use_container_width=True)
+    # --- GRÁFICOS (RESTAURADOS E NOVOS) ---
+    # Usando abas para manter organizado
+    tab1, tab2, tab3 = st.tabs(["📊 Alocação (Barras)", "💠 Oportunidades (Scatter)", "🍩 Distribuição (Pizza)"])
 
-    with g2:
+    with tab1:
+        st.subheader("Quanto tenho em cada fundo?")
+        # O gráfico de barras horizontal que você gostava
+        fig_bar = px.bar(df.sort_values("Valor Atual", ascending=True), 
+                         x="Valor Atual", y="Ticker", orientation='h', text_auto='.2s',
+                         title="Patrimônio por Ativo")
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+    with tab2:
+        st.subheader("Quadrante Mágico: Barato vs Rentável")
+        # O novo gráfico de bolhas
+        fig_scat = px.scatter(df, x="P/VP", y="DY (12m)", size="Valor Atual", color="Ticker",
+                         hover_name="Ticker", text="Ticker")
+        fig_scat.add_hline(y=df["DY (12m)"].mean(), line_dash="dot", annotation_text="Média DY")
+        fig_scat.add_vline(x=1, line_dash="dot", annotation_text="Preço Justo")
+        st.plotly_chart(fig_scat, use_container_width=True)
+
+    with tab3:
         st.subheader("Peso na Carteira")
-        fig2 = px.pie(df, values='Valor Atual', names='Ticker', hole=0.6)
-        st.plotly_chart(fig2, use_container_width=True)
+        fig_pie = px.pie(df, values='Valor Atual', names='Ticker', hole=0.6)
+        st.plotly_chart(fig_pie, use_container_width=True)
 
-    # TABELA INTERATIVA (COM LINKS!)
-    st.subheader("📋 Detalhamento (Clique no Globo para ver o site)")
+    st.divider()
+
+    # --- TABELAS ---
     
-    # Configuração das Colunas Especiais
+    # 1. RADAR (Restaurado e melhorado)
+    st.subheader("🔎 Radar: Oportunidades (P/VP < 1.0)")
+    df_baratos = df[df["P/VP"] < 1.0].sort_values("P/VP")[["Ticker", "Preço Atual", "VP", "P/VP", "DY (12m)"]]
+    
+    if not df_baratos.empty:
+        st.dataframe(
+            df_baratos.style.format({
+                "Preço Atual": "R$ {:.2f}", "VP": "R$ {:.2f}", "P/VP": "{:.2f}", "DY (12m)": "{:.2%}"
+            }).background_gradient(subset=["P/VP"], cmap="Greens_r"),
+            use_container_width=True
+        )
+    else:
+        st.success("Nenhum fundo descontado no momento.")
+
+    # 2. CARTEIRA DETALHADA (Com Links)
+    st.subheader("📋 Carteira Detalhada (Clique no 🌐 para abrir o site)")
     st.dataframe(
         df,
         column_order=("Link", "Ticker", "Preço Atual", "P/VP", "DY (12m)", "Qtd", "Valor Atual", "Var %"),
         column_config={
-            "Link": st.column_config.LinkColumn(
-                "Site", 
-                display_text="🌐", # Mostra um globo em vez da URL feia
-                help="Clique para abrir no Investidor10"
-            ),
+            "Link": st.column_config.LinkColumn("Site", display_text="🌐"),
             "Preço Atual": st.column_config.NumberColumn(format="R$ %.2f"),
             "Valor Atual": st.column_config.NumberColumn(format="R$ %.2f"),
             "P/VP": st.column_config.NumberColumn(format="%.2f"),
@@ -191,4 +202,4 @@ PEDIDOS:
     )
 
 else:
-    st.info("Aguardando dados... Verifique a conexão com a planilha.")
+    st.info("Aguardando dados...")
