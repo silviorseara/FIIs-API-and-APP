@@ -15,7 +15,7 @@ st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💎")
 # --- MODELO DA IA ---
 # Tente este primeiro (é o mais novo público). 
 # Se der erro, troque para "gemini-3-pro-preview" conforme seu print.
-MODELO_IA = "gemini-2.0-flash-exp" 
+MODELO_IA = "gemini-3-pro-preview" 
 
 try:
     URL_FIIS = st.secrets["SHEET_URL_FIIS"]
