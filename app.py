@@ -143,7 +143,7 @@ def carregar_tudo():
     df.replace([np.inf, -np.inf], 0.0, inplace=True)
     return df
 
-# --- FUNÇÃO IA (CORRIGIDA) ---
+# --- FUNÇÃO IA (ATUALIZADA) ---
 def analisar_carteira(df):
     if not HAS_AI: return "⚠️ Chave de API não configurada."
     
@@ -161,23 +161,27 @@ def analisar_carteira(df):
         Total Patrimônio: R$ {df['Valor Atual'].sum():.2f}
         
         Gere uma resposta em Markdown com:
-        1. **Diagnóstico Rápido:** Está bem diversificada? Risco alto ou baixo?
-        2. **Alerta de Oportunidades:** Cite os ativos com P/VP < 1.0 e DY alto.
-        3. **Alerta de Risco:** Cite ativos muito caros (P/VP > 1.2) ou com queda forte.
-        4. **Sugestão Prática:** O que fazer nos próximos aportes?
+        1. **Diagnóstico Rápido:** Diversificação e Risco.
+        2. **Oportunidades:** Ativos descontados (P/VP < 1.0) e bons pagadores.
+        3. **Atenção:** Ativos caros ou com fundamentos duvidosos.
+        4. **Próximos Passos:** Sugestão prática de aporte.
         
-        Seja breve, use tópicos e emojis. Não invente dados.
+        Seja breve. Use emojis.
         """
         
-        # MUDANÇA AQUI: Usando 'gemini-pro' que é mais estável para evitar erro 404
-        model = genai.GenerativeModel('gemini-pro')
-        response = model.generate_content(prompt)
+        # Tenta o modelo Flash (mais rápido), se falhar tenta o Pro
+        try:
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
+        except:
+            model = genai.GenerativeModel('gemini-pro') # Fallback
+            response = model.generate_content(prompt)
+            
         return response.text
     except Exception as e:
         return f"Erro na IA: {str(e)}"
 
 # --- APP LAYOUT ---
-# Topo com Título e Botão
 col_tit, col_btn = st.columns([4, 1])
 with col_tit: st.title("💎 Carteira Pro")
 with col_btn: 
@@ -225,14 +229,13 @@ if not df.empty:
     </div>
     """, unsafe_allow_html=True)
 
-    # --- ÁREA DE IA (INTEGRADA) ---
+    # --- IA ---
     st.markdown("---")
     c_ia1, c_ia2 = st.columns([1, 4])
-    
     with c_ia1:
         st.caption("Inteligência Artificial")
         if st.button("🤖 Analisar Carteira", type="primary", use_container_width=True):
-            with st.spinner("A IA está analisando seus ativos..."):
+            with st.spinner("Analisando..."):
                 analise = analisar_carteira(df)
                 st.session_state['analise_feita'] = analise
 
@@ -240,11 +243,10 @@ if not df.empty:
         if 'analise_feita' in st.session_state:
             st.info(st.session_state['analise_feita'])
         else:
-            st.markdown("*Clique no botão ao lado para receber um diagnóstico completo da sua carteira powered by Gemini.*")
-    
+            st.markdown("*Clique no botão para gerar o diagnóstico da carteira.*")
     st.markdown("---")
 
-    # --- ABAS GRÁFICAS ---
+    # --- ABAS ---
     tab1, tab2, tab3 = st.tabs(["📊 Visão Geral", "🎯 Radar & Oportunidades", "📋 Inventário"])
 
     with tab1:
@@ -264,7 +266,6 @@ if not df.empty:
         if not df_fii.empty:
             mean_dy = df_fii["DY (12m)"].mean()
             fig = px.scatter(df_fii, x="P/VP", y="DY (12m)", size="Valor Atual", color="Ativo", text="Ativo")
-            # Zonas
             fig.add_shape(type="rect", x0=0, y0=mean_dy, x1=1.0, y1=df_fii["DY (12m)"].max()*1.1, fillcolor="rgba(0,255,0,0.1)", line=dict(width=0), layer="below")
             fig.add_annotation(x=0.5, y=df_fii["DY (12m)"].max(), text="OPORTUNIDADES", showarrow=False, font=dict(color="green", weight="bold"))
             fig.add_shape(type="rect", x0=1.0, y0=0, x1=2.0, y1=df_fii["DY (12m)"].max()*1.1, fillcolor="rgba(255,0,0,0.1)", line=dict(width=0), layer="below")
