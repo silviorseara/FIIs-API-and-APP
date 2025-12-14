@@ -15,20 +15,19 @@ except:
     st.error("Erro: Configure 'SHEET_URL_FIIS' e 'SHEET_URL_MANUAL' no arquivo secrets.toml")
     st.stop()
 
-# Colunas (Mantendo sua configuração)
+# Colunas (Sua configuração)
 COL_TICKER = 0; COL_QTD = 5; COL_PRECO = 8; COL_PM = 9; COL_VP = 11; COL_DY = 17
 
 st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💎")
 
-# --- REMOVI O CSS DE CARDS PARA FICAR NATIVO (SEM CONTRASTE RUIM) ---
-# Apenas um ajuste fino para o tamanho das fontes
+# CSS para ajustar tamanho da fonte dos números grandes
 st.markdown("""
 <style>
     [data-testid="stMetricValue"] { font-size: 1.5rem !important; color: #1f77b4; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- FUNÇÕES ---
+# --- FUNÇÕES AUXILIARES ---
 @st.cache_data(ttl=300)
 def get_stock_price(ticker):
     try:
@@ -43,12 +42,15 @@ def get_stock_price(ticker):
     return 0.0
 
 def to_f(x): 
+    """Converte qualquer lixo (R$, %, texto) para float puro."""
     try:
         if pd.isna(x) or str(x).strip() == "": return 0.0
-        return float(str(x).replace("R$","").replace("%","").replace(".","").replace(",","."))
+        # Remove R$, %, espaços e troca vírgula por ponto
+        clean = str(x).replace("R$", "").replace("%", "").replace(" ", "").replace(".", "").replace(",", ".")
+        return float(clean)
     except: return 0.0
 
-# --- CARREGAMENTO ---
+# --- CARREGAMENTO BLINDADO ---
 @st.cache_data(ttl=60)
 def carregar_tudo():
     dados = []
@@ -64,7 +66,9 @@ def carregar_tudo():
                 qtd = to_f(row[COL_QTD])
                 if qtd > 0:
                     dy_raw = to_f(row[COL_DY])
-                    # Normaliza DY (se vier 8.5 vira 0.085)
+                    # Lógica inteligente para DY:
+                    # Se vier 8.5 (significa 8.5%), divide por 100 -> 0.085
+                    # Se vier 0.085 (já é decimal), mantém.
                     dy_calc = dy_raw / 100 if dy_raw > 0.5 else dy_raw
                     
                     dados.append({
@@ -118,10 +122,10 @@ def carregar_tudo():
     df["Total Investido"] = df.apply(lambda x: x["Qtd"] * x["Preço Médio"] if x["Tipo"] in ["FII", "Ação"] and x["Preço Médio"] > 0 else x["Valor Atual"], axis=1)
     df["Lucro R$"] = df["Valor Atual"] - df["Total Investido"]
     
-    # LIMPEZA DE DADOS (CRUCIAL PARA CORRIGIR OS PERCENTUAIS)
-    # Converte tudo para número puro. Se der erro, vira 0.0
-    cols_numericas = ["Valor Atual", "Total Investido", "Preço Atual", "VP", "DY (12m)"]
-    for col in cols_numericas:
+    # LIMPEZA FINAL OBRIGATÓRIA (Remove Flags Vermelhas)
+    # Garante que tudo é float. Se for texto, vira 0.0
+    cols_float = ["Valor Atual", "Total Investido", "Preço Atual", "VP", "DY (12m)", "Preço Médio", "Qtd"]
+    for col in cols_float:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
     # Cálculo P/VP Seguro
@@ -154,16 +158,13 @@ if not df.empty:
     c2.metric("Lucro Global", f"R$ {lucro:,.2f}", delta=f"{rent_geral:.2%}")
     c3.metric("FIIs", f"R$ {df_fiis['Valor Atual'].sum():,.2f}")
     
-    # DY Médio Ponderado (Mais preciso que média simples)
-    if not df_fiis.empty:
-        dy_pond = (df_fiis["Valor Atual"] * df_fiis["DY (12m)"]).sum() / df_fiis["Valor Atual"].sum()
-    else:
-        dy_pond = 0
+    # DY Ponderado
+    dy_pond = (df_fiis["Valor Atual"] * df_fiis["DY (12m)"]).sum() / df_fiis["Valor Atual"].sum() if not df_fiis.empty else 0
     c4.metric("DY Carteira (FIIs)", f"{dy_pond:.2%}")
 
     st.divider()
 
-    tab_dash, tab_opp, tab_det = st.tabs(["📊 Dashboard", "🎯 Radar FIIs", "📋 Tabela Detalhada"])
+    tab_dash, tab_opp, tab_det = st.tabs(["📊 Dashboard", "🎯 Radar Colorido", "📋 Detalhes"])
 
     # 1. DASHBOARD
     with tab_dash:
@@ -179,53 +180,72 @@ if not df.empty:
             fig2.update_layout(yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig2, use_container_width=True)
 
-    # 2. RADAR OPORTUNIDADES
+    # 2. RADAR OPORTUNIDADES (AGORA COM CORES)
     with tab_opp:
         st.subheader("Quadrante Mágico (FIIs)")
+        
+        # Filtra FIIs
         df_fii = df[(df["Tipo"] == "FII") & (df["P/VP"] > 0) & (df["Valor Atual"] > 0)].copy()
         
         if not df_fii.empty:
             mean_dy = df_fii["DY (12m)"].mean()
+            # Gráfico de Bolhas
             fig_scat = px.scatter(df_fii, x="P/VP", y="DY (12m)", size="Valor Atual", color="Ativo", text="Ativo")
             
-            # Áreas coloridas
-            # Verde: Barato e Paga bem
+            # Zonas Coloridas (Fundo do Gráfico)
+            # Verde (Bom)
             fig_scat.add_shape(type="rect", x0=0, y0=mean_dy, x1=1.0, y1=df_fii["DY (12m)"].max()*1.1,
                                fillcolor="rgba(0, 255, 0, 0.1)", line=dict(width=0), layer="below")
-            fig_scat.add_annotation(x=0.5, y=df_fii["DY (12m)"].max(), text="OPORTUNIDADES", showarrow=False, font=dict(color="green"))
+            fig_scat.add_annotation(x=0.5, y=df_fii["DY (12m)"].max(), text="OPORTUNIDADES", showarrow=False, font=dict(color="green", weight="bold"))
             
-            # Vermelho: Caro
+            # Vermelho (Ruim)
             fig_scat.add_shape(type="rect", x0=1.0, y0=0, x1=2.0, y1=df_fii["DY (12m)"].max()*1.1,
                                fillcolor="rgba(255, 0, 0, 0.1)", line=dict(width=0), layer="below")
+            fig_scat.add_annotation(x=1.5, y=mean_dy, text="CAROS / ÁGIO", showarrow=False, font=dict(color="red"))
             
             fig_scat.add_vline(x=1.0, line_dash="dot"); fig_scat.add_hline(y=mean_dy, line_dash="dot")
             st.plotly_chart(fig_scat, use_container_width=True)
         
         st.divider()
-        st.subheader("🔥 Top Descontados (P/VP < 1.0)")
-        df_radar = df[(df["Tipo"] == "FII") & (df["P/VP"] < 1.0) & (df["P/VP"] > 0.1)].sort_values("P/VP")
+
+        # --- TABELA RADAR COM CORES (HEATMAP) ---
+        st.subheader("🔥 Mapa de Calor: Oportunidades")
+        
+        # 1. Filtra os dados
+        df_radar = df[(df["Tipo"] == "FII") & (df["P/VP"] < 1.0) & (df["P/VP"] > 0.1)].copy()
         
         if not df_radar.empty:
+            # 2. Seleciona colunas e ordena
+            cols_show = ["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"]
+            df_radar = df_radar.sort_values("P/VP")[cols_show]
+
+            # 3. Aplica o Estilo (Pandas Styler) - Isso traz as cores de volta!
+            # Nota: Usamos formatadores Python padrão ({:.2%}) para garantir que 0.10 vire 10.00%
             st.dataframe(
-                df_radar[["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"]],
-                column_config={
-                    "Preço Atual": st.column_config.NumberColumn(format="R$ %.2f"),
-                    "Valor Atual": st.column_config.NumberColumn(format="R$ %.2f"),
-                    "P/VP": st.column_config.NumberColumn(format="%.2f"),
-                    "DY (12m)": st.column_config.NumberColumn(format="%.2%"),
-                    "% Carteira": st.column_config.ProgressColumn(format="%.2%", min_value=0, max_value=1)
-                },
-                hide_index=True, use_container_width=True
+                df_radar.style
+                .format({
+                    "Preço Atual": "R$ {:.2f}",
+                    "Valor Atual": "R$ {:.2f}",
+                    "P/VP": "{:.2f}",
+                    "DY (12m)": "{:.2%}",      # Normalizado: 0.10 -> 10.00%
+                    "% Carteira": "{:.2%}"     # Normalizado
+                })
+                .background_gradient(subset=["P/VP"], cmap="RdYlGn_r") # Verde para baixo P/VP
+                .background_gradient(subset=["DY (12m)"], cmap="Greens"), # Verde para alto DY
+                use_container_width=True,
+                height=500
             )
+            st.caption("*Cores: Verde escuro indica as melhores métricas (P/VP mais baixo ou DY mais alto).*")
         else:
             st.info("Nenhum fundo descontado.")
 
-    # 3. DETALHES (TABELA GERAL)
+    # 3. DETALHES (TABELA LIMPA)
     with tab_det:
-        st.subheader("Inventário")
+        st.subheader("Inventário Completo")
         tipos = st.multiselect("Filtrar:", df["Tipo"].unique(), default=df["Tipo"].unique())
         df_view = df[df["Tipo"].isin(tipos)]
 
+        # Aqui usamos column_config para ter barras de progresso e links
         st.dataframe(
             df_view,
             column_order=("Link", "Ativo", "Tipo", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira"),
@@ -236,7 +256,9 @@ if not df.empty:
                 "Qtd": st.column_config.NumberColumn(format="%.0f"),
                 "Var %": st.column_config.NumberColumn("Rentab.", format="%.2%"),
                 "DY (12m)": st.column_config.NumberColumn("DY (12m)", format="%.2%"),
-                "% Carteira": st.column_config.ProgressColumn("Peso", format="%.2%", min_value=0, max_value=1),
+                "% Carteira": st.column_config.ProgressColumn(
+                    "Peso", format="%.2%", min_value=0, max_value=1
+                ),
             },
             hide_index=True,
             use_container_width=True,
