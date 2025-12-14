@@ -19,7 +19,7 @@ try:
     URL_FIIS = st.secrets["SHEET_URL_FIIS"]
     URL_MANUAL = st.secrets["SHEET_URL_MANUAL"]
     
-    # Tenta carregar o link de edição (Opcional, mas recomendado)
+    # Link da Planilha para o botão
     if "LINK_PLANILHA" in st.secrets:
         URL_EDIT = st.secrets["LINK_PLANILHA"]
     else:
@@ -67,7 +67,7 @@ st.markdown("""
     .neg { color: #721c24; background-color: #f8d7da; }
     .neu { color: #383d41; background-color: #e2e3e5; }
     
-    .stButton button { width: 100%; border-radius: 8px; font-weight: bold; height: 3rem; }
+    .stButton button { width: 100%; border-radius: 8px; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -164,34 +164,51 @@ def carregar_tudo():
     
     return df
 
-# --- FUNÇÃO IA ---
+# --- FUNÇÃO IA QUE RETORNA O PROMPT EM CASO DE ERRO ---
 def analisar_carteira(df):
-    if not HAS_AI: return "⚠️ Chave de API não configurada."
+    # Prepara o prompt (usado no sucesso ou no erro)
     try:
         df_resumo = df[df["Tipo"]!="Outros"][["Ativo", "Tipo", "Preço Atual", "P/VP", "DY (12m)", "Var %"]].copy()
         csv_data = df_resumo.to_csv(index=False)
         prompt = f"""
-        Você é um analista financeiro. Analise esta carteira (CSV):
+        Você é um consultor financeiro sênior (foco: FIIs e Ações Brasil).
+        Analise a carteira abaixo com rigor técnico e brevidade.
+        
+        DADOS:
         {csv_data}
         Patrimônio Total: R$ {df['Valor Atual'].sum():.2f}
         Total Investido: R$ {df['Total Investido'].sum():.2f}
         
-        Responda em Markdown:
-        1. **Diagnóstico:** Diversificação e Risco.
-        2. **Oportunidades:** Ativos com P/VP < 1.0 e bom DY.
-        3. **Alertas:** Ativos caros ou com fundamentos ruins.
-        4. **Ação Recomendada:** Onde aportar?
+        ENTREGÁVEL (Use Markdown e Emojis):
+        1. 📊 **Diagnóstico:** Diversificação, Risco e Rentabilidade.
+        2. 💎 **Oportunidades:** FIIs com P/VP < 1.0, DY > 10% e vacância controlada (se souber).
+        3. ⚠️ **Pontos de Atenção:** Ativos com P/VP > 1.10 ou fundamentos ruins.
+        4. 🎯 **Ação:** Onde alocar o próximo aporte?
         """
+    except:
+        return False, "Erro ao gerar dados", ""
+
+    if not HAS_AI: 
+        return False, "Sem Chave API", prompt
+    
+    try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={API_KEY}"
         headers = {'Content-Type': 'application/json'}
         data = {"contents": [{"parts": [{"text": prompt}]}]}
+        
         response = requests.post(url, headers=headers, data=json.dumps(data))
+        
         if response.status_code == 200:
-            return response.json()['candidates'][0]['content']['parts'][0]['text']
-        else: return f"Erro IA ({response.status_code}): {response.text}"
-    except Exception as e: return f"Erro conexão: {str(e)}"
+            texto_ia = response.json()['candidates'][0]['content']['parts'][0]['text']
+            return True, texto_ia, prompt
+        else:
+            # Retorna Falso e o Prompt para fazer manual
+            return False, "Erro API", prompt
+            
+    except Exception as e: 
+        return False, str(e), prompt
 
-# --- LAYOUT ---
+# --- LAYOUT PRINCIPAL ---
 col_tit, col_btn = st.columns([4, 1])
 with col_tit: st.title("💎 Carteira Pro")
 with col_btn: 
@@ -199,7 +216,52 @@ with col_btn:
 
 df = carregar_tudo()
 
+# --- SIDEBAR (FERRAMENTAS) ---
+with st.sidebar:
+    st.header("Ferramentas")
+    
+    # 1. Botão Planilha
+    if URL_EDIT:
+        st.link_button("📂 Abrir Planilha Fonte", URL_EDIT)
+    else:
+        st.caption("Sem link de planilha configurado.")
+    
+    st.markdown("---")
+    
+    # 2. Botão IA (Só roda se clicar)
+    if not df.empty:
+        if st.button("🤖 Analisar com IA", type="primary", use_container_width=True):
+            with st.spinner(f"Consultando {MODELO_IA}..."):
+                sucesso, resultado, prompt_usado = analisar_carteira(df)
+                # Salva no estado para não perder ao recarregar
+                st.session_state['ia_sucesso'] = sucesso
+                st.session_state['ia_resultado'] = resultado
+                st.session_state['ia_prompt'] = prompt_usado
+                st.session_state['ia_rodou'] = True
+
 if not df.empty:
+    # --- EXIBIÇÃO DA IA (NO TOPO) ---
+    if st.session_state.get('ia_rodou'):
+        st.markdown("### 🤖 Análise Inteligente")
+        
+        if st.session_state['ia_sucesso']:
+            # Caso de Sucesso: Mostra a análise bonita
+            st.info(st.session_state['ia_resultado'])
+        else:
+            # Caso de Erro: Mostra o Fallback (Prompt + Botão)
+            st.warning("⚠️ A IA integrada está indisponível no momento. Use o modo manual:")
+            
+            c_manual1, c_manual2 = st.columns([3, 1])
+            with c_manual1:
+                st.text_area("Copie este Prompt:", value=st.session_state['ia_prompt'], height=150)
+            with c_manual2:
+                st.write("") # Espaço
+                st.write("") 
+                st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app", use_container_width=True)
+                st.caption("1. Copie o texto ao lado.\n2. Clique para abrir o Gemini.\n3. Cole e envie.")
+        
+        st.markdown("---")
+
     # --- DADOS ---
     patrimonio = df["Valor Atual"].sum()
     investido = df["Total Investido"].sum()
@@ -241,17 +303,6 @@ if not df.empty:
         </div>
     </div>
     """, unsafe_allow_html=True)
-
-    # --- IA & DADOS ---
-    c_ia1, c_ia2 = st.columns([1, 4])
-    with c_ia1:
-        if st.button("🤖 Analisar com IA", type="primary", use_container_width=True):
-            with st.spinner(f"Consultando {MODELO_IA}..."):
-                analise = analisar_carteira(df)
-                st.session_state['analise_feita'] = analise
-    with c_ia2:
-        if 'analise_feita' in st.session_state: st.info(st.session_state['analise_feita'])
-    st.markdown("---")
 
     tab1, tab2, tab3 = st.tabs(["📊 Visão Geral", "🎯 Radar & Oportunidades", "📋 Inventário"])
 
@@ -309,12 +360,5 @@ if not df.empty:
             },
             hide_index=True, use_container_width=True, height=600
         )
-
-# --- SIDEBAR (LINK PARA PLANILHA) ---
-with st.sidebar:
-    st.header("Ferramentas")
-    # Botão de Link para a Planilha (Se configurado nos Secrets)
-    if "LINK_PLANILHA" in st.secrets:
-        st.link_button("📂 Abrir Planilha Fonte", st.secrets["LINK_PLANILHA"])
-    else:
-        st.caption("Configure 'LINK_PLANILHA' nos segredos para ver o botão.")
+else:
+    st.info("Carregando... Verifique seus links.")
