@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import re
 import requests
+import numpy as np # Importante para corrigir o erro de Infinito
 from bs4 import BeautifulSoup
 
 # ==========================================
@@ -20,62 +21,29 @@ COL_TICKER = 0; COL_QTD = 5; COL_PRECO = 8; COL_PM = 9; COL_VP = 11; COL_DY = 17
 
 st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💎")
 
-# --- CSS PROFISSIONAL (CARDS ALINHADOS) ---
+# --- CSS PARA CARDS (Compatível com Modo Escuro/Claro) ---
 st.markdown("""
 <style>
-    /* Container Flexbox para alinhar os cards */
     .kpi-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 15px;
-        margin-bottom: 20px;
-        width: 100%;
+        display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 20px;
     }
-    
-    /* O Card em si */
     .kpi-card {
-        background-color: #ffffff;
-        border-radius: 12px;
+        background-color: var(--background-secondary-color); /* Usa a cor do tema do usuário */
+        border: 1px solid var(--text-color-20);
+        border-radius: 10px;
         padding: 20px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        border: 1px solid #e0e0e0;
-        flex: 1; /* Faz todos terem a mesma largura base */
-        min-width: 240px; /* Largura mínima antes de quebrar linha */
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
+        flex: 1;
+        min-width: 200px;
         text-align: center;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
     }
-
-    .kpi-label {
-        font-size: 0.9rem;
-        color: #666;
-        font-weight: 600;
-        text-transform: uppercase;
-        margin-bottom: 8px;
-    }
-
-    .kpi-value {
-        font-size: 1.8rem;
-        font-weight: 700;
-        color: #1f77b4;
-        margin-bottom: 8px;
-    }
-
-    .kpi-delta {
-        font-size: 0.85rem;
-        font-weight: 600;
-        padding: 4px 12px;
-        border-radius: 20px;
-        display: inline-block;
-    }
-
-    /* Cores das Tags */
-    .positive { background-color: #d4edda; color: #155724; }
-    .negative { background-color: #f8d7da; color: #721c24; }
-    .neutral  { background-color: #e2e3e5; color: #383d41; }
-
+    .kpi-label { font-size: 0.9rem; opacity: 0.8; margin-bottom: 5px; text-transform: uppercase; }
+    .kpi-value { font-size: 1.6rem; font-weight: bold; color: #1f77b4; }
+    .kpi-delta { font-size: 0.8rem; font-weight: 600; padding: 2px 8px; border-radius: 10px; display: inline-block; margin-top: 5px;}
+    
+    .pos { color: #155724; background-color: #d4edda; }
+    .neg { color: #721c24; background-color: #f8d7da; }
+    .neu { color: #383d41; background-color: #e2e3e5; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -115,7 +83,10 @@ def carregar_tudo():
                 qtd = to_f(row[COL_QTD])
                 if qtd > 0:
                     dy_raw = to_f(row[COL_DY])
-                    dy_calc = dy_raw / 100 if dy_raw > 1.0 else dy_raw
+                    # PADRONIZAÇÃO DE PERCENTUAL
+                    # Queremos sempre decimal (ex: 0.10 para 10%). 
+                    # Se vier > 1 (ex: 10.5), divide por 100.
+                    dy_calc = dy_raw / 100 if dy_raw > 0.5 else dy_raw
                     
                     dados.append({
                         "Ativo": raw, "Tipo": "FII", "Qtd": qtd,
@@ -166,149 +137,116 @@ def carregar_tudo():
     df["Valor Atual"] = df.apply(lambda x: x["Qtd"] * x["Preço Atual"] if x["Tipo"] in ["FII", "Ação"] else x["Preço Atual"], axis=1)
     df["Total Investido"] = df.apply(lambda x: x["Qtd"] * x["Preço Médio"] if x["Tipo"] in ["FII", "Ação"] and x["Preço Médio"] > 0 else x["Valor Atual"], axis=1)
     df["Lucro R$"] = df["Valor Atual"] - df["Total Investido"]
-    df["Renda Mensal"] = df.apply(lambda x: (x["Valor Atual"] * x["DY (12m)"] / 12) if x["Tipo"] == "FII" else 0.0, axis=1)
     
-    # Limpeza Final (Converter tudo para float)
+    # Renda Mensal (Só FIIs)
+    df["Renda Mensal"] = df.apply(lambda x: (x["Valor Atual"] * x["DY (12m)"] / 12) if x["Tipo"] == "FII" else 0.0, axis=1)
+
+    # LIMPEZA NUCLEAR (Resolve as Flags Vermelhas)
     cols_float = ["Valor Atual", "Total Investido", "Preço Atual", "VP", "DY (12m)", "Renda Mensal", "Lucro R$"]
     for col in cols_float:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
-    # Cálculo P/VP Seguro
+    # Cálculos de Razão (Cuidado com divisão por zero)
     df["P/VP"] = df.apply(lambda x: (x["Preço Atual"] / x["VP"]) if x["VP"] > 0 else 0.0, axis=1)
     
-    # Cálculo Var % Seguro
     df["Var %"] = df.apply(lambda x: (x["Valor Atual"] / x["Total Investido"] - 1) if x["Total Investido"] > 0 else 0.0, axis=1)
-
-    # % Carteira
+    
     patr = df["Valor Atual"].sum()
     df["% Carteira"] = df["Valor Atual"] / patr if patr > 0 else 0.0
-
+    
+    # REMOÇÃO FINAL DE INFINITOS (Isso mata o erro de exibição)
+    df.replace([np.inf, -np.inf], 0.0, inplace=True)
+    
     return df
 
 # --- APP ---
-st.title("💎 Patrimônio Global")
+st.title("💎 Carteira Pro")
 
 df = carregar_tudo()
 
 if not df.empty:
     
-    # --- CÁLCULOS DOS CARDS ---
+    # --- HTML DOS CARDS (Estilo Fixo) ---
     patrimonio = df["Valor Atual"].sum()
     investido = df["Total Investido"].sum()
+    val_rs = patrimonio - investido
+    val_pct = val_rs / investido if investido > 0 else 0
+    renda = df["Renda Mensal"].sum()
+    fiis_total = df[df["Tipo"]=="FII"]["Valor Atual"].sum()
     
-    # Valorização (Capital)
-    valorizacao_rs = patrimonio - investido
-    valorizacao_pct = (valorizacao_rs / investido) if investido > 0 else 0
+    # Definição de classes CSS para cores
+    cls_val = "pos" if val_rs >= 0 else "neg"
+    sinal = "+" if val_rs >= 0 else ""
     
-    # Renda Mensal
-    renda_mensal = df["Renda Mensal"].sum()
-    
-    # FIIs
-    val_fiis = df[df["Tipo"]=="FII"]["Valor Atual"].sum()
-    pct_fiis = val_fiis / patrimonio if patrimonio > 0 else 0
-
-    # Lógica de Cor e Sinal
-    cor_val = "positive" if valorizacao_rs >= 0 else "negative"
-    sinal_val = "+" if valorizacao_rs >= 0 else ""
-
-    # --- HTML DOS CARDS (O CORRETO) ---
-    # Atenção: Aqui usamos st.markdown com unsafe_allow_html=True
-    html_cards = f"""
+    st.markdown(f"""
     <div class="kpi-container">
         <div class="kpi-card">
-            <div class="kpi-label">Patrimônio Total</div>
+            <div class="kpi-label">Patrimônio Global</div>
             <div class="kpi-value">R$ {patrimonio:,.2f}</div>
-            <div class="kpi-delta neutral">Acumulado</div>
+            <div class="kpi-delta neu">Acumulado</div>
         </div>
-        
         <div class="kpi-card">
-            <div class="kpi-label">Valorização (Capital)</div>
-            <div class="kpi-value">R$ {valorizacao_rs:,.2f}</div>
-            <div class="kpi-delta {cor_val}">{sinal_val}{valorizacao_pct:.2%}</div>
+            <div class="kpi-label">Valorização</div>
+            <div class="kpi-value">R$ {val_rs:,.2f}</div>
+            <div class="kpi-delta {cls_val}">{sinal}{val_pct:.2%}</div>
         </div>
-
         <div class="kpi-card">
             <div class="kpi-label">Renda Mensal Est.</div>
-            <div class="kpi-value">R$ {renda_mensal:,.2f}</div>
-            <div class="kpi-delta positive">Fluxo Passivo</div>
+            <div class="kpi-value">R$ {renda:,.2f}</div>
+            <div class="kpi-delta pos">Dividendos</div>
         </div>
-
         <div class="kpi-card">
-            <div class="kpi-label">Total em FIIs</div>
-            <div class="kpi-value">R$ {val_fiis:,.2f}</div>
-            <div class="kpi-delta neutral">{pct_fiis:.1%} da Carteira</div>
+            <div class="kpi-label">FIIs (Renda Variável)</div>
+            <div class="kpi-value">R$ {fiis_total:,.2f}</div>
+            <div class="kpi-delta neu">{(fiis_total/patrimonio if patrimonio>0 else 0):.1%} do Total</div>
         </div>
     </div>
-    """
-    
-    # ESTA É A LINHA QUE FAZ A MÁGICA (RENDERIZA O HTML):
-    st.markdown(html_cards, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-    # --- NAVEGAÇÃO ---
-    tab_dash, tab_opp, tab_det = st.tabs(["📊 Dashboard", "🎯 Radar & Oportunidades", "📋 Inventário"])
+    tab1, tab2, tab3 = st.tabs(["📊 Visão Geral", "🎯 Radar Oportunidades", "📋 Inventário"])
 
-    # 1. DASHBOARD
-    with tab_dash:
+    with tab1:
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("Distribuição por Classe")
-            fig = px.sunburst(df, path=['Tipo', 'Ativo'], values='Valor Atual', color='Tipo',
-                              color_discrete_sequence=px.colors.qualitative.Pastel)
+            fig = px.sunburst(df, path=['Tipo', 'Ativo'], values='Valor Atual', color='Tipo', color_discrete_sequence=px.colors.qualitative.Pastel)
             st.plotly_chart(fig, use_container_width=True)
         with c2:
-            st.subheader("Maiores Posições")
             top = df.sort_values("Valor Atual", ascending=False).head(10)
-            fig2 = px.bar(top, x="Valor Atual", y="Ativo", color="Tipo", orientation='h', text_auto='.2s',
-                          color_discrete_sequence=px.colors.qualitative.Pastel)
+            fig2 = px.bar(top, x="Valor Atual", y="Ativo", color="Tipo", orientation='h', text_auto='.2s', color_discrete_sequence=px.colors.qualitative.Pastel)
             fig2.update_layout(yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig2, use_container_width=True)
 
-    # 2. RADAR
-    with tab_opp:
+    with tab2:
         st.subheader("Quadrante Mágico (FIIs)")
-        
         df_fii = df[(df["Tipo"] == "FII") & (df["P/VP"] > 0) & (df["Valor Atual"] > 0)].copy()
         
         if not df_fii.empty:
             mean_dy = df_fii["DY (12m)"].mean()
             fig = px.scatter(df_fii, x="P/VP", y="DY (12m)", size="Valor Atual", color="Ativo", text="Ativo")
-            
             # Zonas
-            fig.add_shape(type="rect", x0=0, y0=mean_dy, x1=1.0, y1=df_fii["DY (12m)"].max()*1.1,
-                               fillcolor="rgba(0, 255, 0, 0.1)", line=dict(width=0), layer="below")
+            fig.add_shape(type="rect", x0=0, y0=mean_dy, x1=1.0, y1=df_fii["DY (12m)"].max()*1.1, fillcolor="rgba(0,255,0,0.1)", line=dict(width=0), layer="below")
             fig.add_annotation(x=0.5, y=df_fii["DY (12m)"].max(), text="OPORTUNIDADES", showarrow=False, font=dict(color="green", weight="bold"))
-            
-            fig.add_shape(type="rect", x0=1.0, y0=0, x1=2.0, y1=df_fii["DY (12m)"].max()*1.1,
-                               fillcolor="rgba(255, 0, 0, 0.1)", line=dict(width=0), layer="below")
-            
+            fig.add_shape(type="rect", x0=1.0, y0=0, x1=2.0, y1=df_fii["DY (12m)"].max()*1.1, fillcolor="rgba(255,0,0,0.1)", line=dict(width=0), layer="below")
             fig.add_vline(x=1.0, line_dash="dot")
-            fig.update_layout(height=500, xaxis_title="P/VP", yaxis_title="Dividend Yield")
             st.plotly_chart(fig, use_container_width=True)
-        
-        st.divider()
 
-        st.subheader("🔥 Top Oportunidades (P/VP < 1.0)")
+        st.divider()
+        st.subheader("🔥 Top Descontados")
         df_radar = df[(df["Tipo"] == "FII") & (df["P/VP"] < 1.0) & (df["P/VP"] > 0.1)].copy()
         
         if not df_radar.empty:
             df_radar = df_radar.sort_values("P/VP")[["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"]]
-            
             st.dataframe(
-                df_radar.style
-                .format({
-                    "Preço Atual": "R$ {:.2f}", "Valor Atual": "R$ {:.2f}",
-                    "P/VP": "{:.2f}", "DY (12m)": "{:.2%}", "% Carteira": "{:.2%}"
-                })
-                .background_gradient(subset=["P/VP"], cmap="RdYlGn_r")
-                .background_gradient(subset=["DY (12m)"], cmap="Greens"),
+                df_radar.style.format({
+                    "Preço Atual": "R$ {:.2f}", "Valor Atual": "R$ {:.2f}", "P/VP": "{:.2f}",
+                    "DY (12m)": "{:.2%}", "% Carteira": "{:.2%}"
+                }).background_gradient(subset=["P/VP"], cmap="RdYlGn_r").background_gradient(subset=["DY (12m)"], cmap="Greens"),
                 use_container_width=True
             )
         else:
-            st.info("Nenhum fundo descontado.")
+            st.info("Nenhum FII descontado.")
 
-    # 3. DETALHES
-    with tab_det:
+    with tab3:
         st.subheader("Inventário Completo")
         tipos = st.multiselect("Filtrar:", df["Tipo"].unique(), default=df["Tipo"].unique())
         df_view = df[df["Tipo"].isin(tipos)]
@@ -321,20 +259,15 @@ if not df.empty:
                 "Preço Atual": st.column_config.NumberColumn(format="R$ %.2f"),
                 "Valor Atual": st.column_config.NumberColumn(format="R$ %.2f"),
                 "Qtd": st.column_config.NumberColumn(format="%.0f"),
-                "Var %": st.column_config.NumberColumn("Valoriz.", format="%.2%"),
-                "DY (12m)": st.column_config.NumberColumn(format="%.2%"),
+                # Formatadores Corrigidos
+                "Var %": st.column_config.NumberColumn("Rentab.", format="%.2%"),
+                "DY (12m)": st.column_config.NumberColumn("DY (12m)", format="%.2%"),
                 "% Carteira": st.column_config.ProgressColumn("Peso", format="%.2%", min_value=0, max_value=1),
                 "Renda Mensal": st.column_config.NumberColumn("Renda Est.", format="R$ %.2f"),
             },
-            hide_index=True,
-            use_container_width=True,
-            height=600
+            hide_index=True, use_container_width=True, height=600
         )
 
-else:
-    st.info("Carregando... Verifique seus links.")
-
-# --- SIDEBAR ---
 with st.sidebar:
     st.header("Ferramentas")
     if st.button("🧠 Prompt IA"): st.session_state['gerar_ia'] = True
