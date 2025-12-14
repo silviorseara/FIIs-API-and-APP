@@ -9,25 +9,22 @@ from bs4 import BeautifulSoup
 # ⚙️ CONFIGURAÇÃO DE SEGURANÇA E COLUNAS
 # ==========================================
 try:
-    # Tenta carregar as duas URLs dos segredos
     URL_FIIS = st.secrets["SHEET_URL_FIIS"]
     URL_MANUAL = st.secrets["SHEET_URL_MANUAL"]
 except:
     st.error("Erro Crítico: Configure 'SHEET_URL_FIIS' e 'SHEET_URL_MANUAL' no arquivo .streamlit/secrets.toml")
     st.stop()
 
-# Configurações de Colunas (BASEADAS NO SEU AJUSTE ANTERIOR)
+# Configurações de Colunas
 COL_TICKER = 0   # Coluna A
 COL_QTD = 5      # Coluna F
-COL_PRECO = 8    # Coluna I (GoogleFinance)
+COL_PRECO = 8    # Coluna I
 COL_PM = 9       # Coluna J
 COL_VP = 11      # Coluna L
 COL_DY = 17      # Coluna R
 
-# Configuração inicial do Streamlit
 st.set_page_config(page_title="Carteira Consolidada", layout="wide", page_icon="💎")
 
-# CSS Elegante
 st.markdown("""
 <style>
     .metric-card { background-color: #f9f9f9; border-radius: 8px; padding: 15px; border: 1px solid #eee; }
@@ -114,7 +111,7 @@ def carregar_tudo():
 
                     if "AÇÃO" in tipo_raw or "ACAO" in tipo_raw:
                         tipo_final = "Ação"
-                        pm = valor_input # Assume valor da planilha como PM inicial
+                        pm = valor_input 
                         preco_live = get_stock_price(ativo)
                         preco_atual = preco_live if preco_live > 0 else valor_input
                         valor_total = qtd * preco_atual
@@ -140,24 +137,33 @@ def carregar_tudo():
     df_final = pd.DataFrame(dados_consolidados)
     if df_final.empty: return df_final
     
-    # Cálculos Finais
+    # Limpeza e Deduplicação
     df_final = df_final.drop_duplicates(subset=["Ativo", "Tipo"], keep="first")
     
-    # Total Investido (Custo de Aquisição)
+    # ---------------------------------------------------------
+    # CORREÇÃO PRINCIPAL: Cálculos de Colunas Faltantes (P/VP)
+    # ---------------------------------------------------------
+    
+    # 1. Total Investido
     df_final["Total Investido"] = df_final.apply(
         lambda x: (x["Qtd"] * x["Preço Médio"]) if x["Tipo"] in ["FII", "Ação"] and x["Preço Médio"] > 0 else x["Valor Atual"], 
         axis=1
     )
     
+    # 2. P/VP (Essencial para o gráfico funcionar)
+    df_final["P/VP"] = df_final.apply(
+        lambda x: (x["Preço Atual"] / x["VP"]) if x["VP"] > 0 else 0.0, 
+        axis=1
+    )
+
+    # 3. Lucro e Rentabilidade
     df_final["Lucro R$"] = df_final["Valor Atual"] - df_final["Total Investido"]
-    
-    # Rentabilidade (%) - Proteção contra divisão por zero
     df_final["Var %"] = df_final.apply(
         lambda x: (x["Valor Atual"] / x["Total Investido"] - 1) if x["Total Investido"] > 0 else 0.0, 
         axis=1
     )
     
-    # % na Carteira (Novo!)
+    # 4. Percentual na Carteira
     patrimonio_total = df_final["Valor Atual"].sum()
     df_final["% Carteira"] = df_final["Valor Atual"] / patrimonio_total if patrimonio_total > 0 else 0
 
@@ -181,14 +187,13 @@ if not df.empty:
                     resumo = df_ia.to_markdown(index=False)
                 except: 
                     resumo = df_ia.to_string(index=False)
-                prompt = f"Analise minha carteira de Renda Variável (RV):\nTotal RV: R$ {df[df['Tipo']!='Outros']['Valor Atual'].sum():,.2f}\n{resumo}\n1. Balanceamento FIIs/Ações.\n2. Riscos.\n3. Otimizações."
+                prompt = f"Analise carteira RV:\nTotal: R$ {df[df['Tipo']!='Outros']['Valor Atual'].sum():,.2f}\n{resumo}\n1. Balanceamento.\n2. Riscos.\n3. Sugestões."
                 st.code(prompt, language="text")
             except: pass
 
     # --- KPIs ---
     patrimonio = df["Valor Atual"].sum()
     lucro_total = df["Lucro R$"].sum()
-    # Rentabilidade Global Ponderada
     rent_total = (lucro_total / df["Total Investido"].sum()) if df["Total Investido"].sum() > 0 else 0
     
     grp = df.groupby("Tipo")["Valor Atual"].sum()
@@ -202,7 +207,7 @@ if not df.empty:
     st.divider()
 
     # --- ABAS ---
-    tab1, tab2, tab3 = st.tabs(["📊 Distribuição", "💠 Análise Avançada", "📋 Detalhes"])
+    tab1, tab2, tab3 = st.tabs(["📊 Distribuição", "💠 Análise FIIs", "📋 Detalhes"])
 
     with tab1:
         col_g1, col_g2 = st.columns(2)
@@ -216,32 +221,26 @@ if not df.empty:
             st.plotly_chart(fig2, use_container_width=True)
 
     with tab2:
-        st.subheader("Quadrante Mágico: Barato vs Rentável")
+        st.subheader("Quadrante Mágico: Barato vs Rentável (Apenas FIIs)")
+        st.info("Topo Esq: Oportunidades (DY Alto/PVP Baixo) | Topo Dir: Caros | Baixo Esq: Descontados sem rendimento")
         
-        # Explicação do Gráfico
-        st.info("""
-        **Como interpretar este gráfico:**
-        * **Topo Esquerdo (🎯 Oportunidades):** DY Alto e P/VP Baixo. São fundos baratos que pagam bem.
-        * **Topo Direito:** DY Alto, mas P/VP Alto (Caros).
-        * **Baixo Esquerdo:** DY Baixo e P/VP Baixo (Descontados, mas pagam pouco).
-        * **Baixo Direito:** DY Baixo e P/VP Alto (Evitar).
-        * *O tamanho da bolha representa o valor investido.*
-        """)
-        
-        # Filtra só FIIs para o scatter plot
+        # Filtra e garante que temos dados para plotar
         df_fii = df[df["Tipo"] == "FII"].copy()
-        if not df_fii.empty:
+        
+        if not df_fii.empty and "P/VP" in df_fii.columns:
+            # Proteção extra para garantir que Valor Atual > 0 para o tamanho da bolha
+            df_fii = df_fii[df_fii["Valor Atual"] > 0]
+            
             fig_scat = px.scatter(df_fii, x="P/VP", y="DY (12m)", size="Valor Atual", color="Ativo",
                              hover_name="Ativo", text="Ativo")
             fig_scat.add_hline(y=df_fii["DY (12m)"].mean(), line_dash="dot", annotation_text="Média DY")
-            fig_scat.add_vline(x=1, line_dash="dot", annotation_text="Preço Justo (1.0)")
+            fig_scat.add_vline(x=1, line_dash="dot", annotation_text="Preço Justo")
             st.plotly_chart(fig_scat, use_container_width=True)
+        else:
+            st.warning("Sem dados suficientes de FIIs para gerar o gráfico.")
         
         st.divider()
-        
-        # --- RADAR OPORTUNIDADES (ATUALIZADO) ---
         st.subheader("🔎 Radar: Oportunidades (P/VP < 1.0)")
-        # Filtra e Seleciona Colunas
         df_baratos = df[(df["P/VP"] < 1.0) & (df["P/VP"] > 0) & (df["Tipo"] == "FII")].copy()
         
         if not df_baratos.empty:
@@ -254,27 +253,16 @@ if not df.empty:
                     "Valor Atual": st.column_config.NumberColumn(format="R$ %.2f"),
                     "P/VP": st.column_config.NumberColumn(format="%.2f"),
                     "DY (12m)": st.column_config.NumberColumn(format="%.2%"),
-                    # Barra de progresso visual para % Carteira
-                    "% Carteira": st.column_config.ProgressColumn(
-                        format="%.2%", 
-                        min_value=0, 
-                        max_value=1, # Escala de 0 a 100%
-                        help="Quanto este ativo representa do seu patrimônio total"
-                    ),
+                    "% Carteira": st.column_config.ProgressColumn(format="%.2%", min_value=0, max_value=1),
                 },
                 hide_index=True,
                 use_container_width=True
             )
-        else:
-            st.success("Nenhum FII com P/VP < 1.0 encontrado.")
 
     with tab3:
-        st.subheader("Carteira Detalhada (FIIs + Ações)")
-        
-        # Filtra Renda Variável
+        st.subheader("Carteira Detalhada")
         df_rv = df[df["Tipo"].isin(["FII", "Ação"])].copy()
 
-        # Tabela com formatação corrigida
         st.dataframe(
             df_rv,
             column_order=("Link", "Ativo", "Tipo", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)"),
@@ -282,26 +270,17 @@ if not df.empty:
                 "Link": st.column_config.LinkColumn("Site", display_text="🌐"),
                 "Preço Atual": st.column_config.NumberColumn(format="R$ %.2f"),
                 "Valor Atual": st.column_config.NumberColumn(format="R$ %.2f"),
-                "Qtd": st.column_config.NumberColumn(format="%.0f"), # Sem casas decimais para qtd
-                # CORREÇÃO DOS PERCENTUAIS AQUI:
-                "Var %": st.column_config.NumberColumn(
-                    "Rentabilidade", 
-                    format="%.2%", # Força formato porcentagem (x100)
-                    help="Lucro ou Prejuízo baseado no Preço Médio"
-                ),
-                "DY (12m)": st.column_config.NumberColumn(
-                    "DY (12m)", 
-                    format="%.2%" # Força formato porcentagem
-                ),
+                "Qtd": st.column_config.NumberColumn(format="%.0f"),
+                "Var %": st.column_config.NumberColumn("Rentabilidade", format="%.2%"),
+                "DY (12m)": st.column_config.NumberColumn("DY (12m)", format="%.2%"),
             },
             hide_index=True,
             use_container_width=True
         )
         
-        # Tabela de Outros (se houver)
         df_outros = df[df["Tipo"] == "Outros"]
         if not df_outros.empty:
-            st.markdown("### Outros Investimentos")
+            st.markdown("### Outros")
             st.dataframe(
                 df_outros[["Ativo", "Valor Atual", "% Carteira"]],
                 column_config={
@@ -313,13 +292,4 @@ if not df.empty:
             )
 
 else:
-    st.info("Carregando dados... Verifique se os links secretos estão corretos.")
-
-# --- SIDEBAR ---
-with st.sidebar:
-    st.header("Ferramentas")
-    if st.button("🧠 Gerar Prompt IA"):
-        st.session_state['gerar_ia'] = True
-    if st.button("🔄 Atualizar Dados"):
-        st.cache_data.clear()
-        st.rerun()
+    st.info("Carregando dados... Verifique seus links secretos.")
