@@ -12,13 +12,19 @@ from bs4 import BeautifulSoup
 # ==========================================
 st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💎")
 
-# --- MODELO DA IA ---
-# Configurado exatamente conforme sua orientação
+# Modelo IA
 MODELO_IA = "gemini-2.5-flash-lite"
 
 try:
     URL_FIIS = st.secrets["SHEET_URL_FIIS"]
     URL_MANUAL = st.secrets["SHEET_URL_MANUAL"]
+    
+    # Tenta carregar o link de edição (Opcional, mas recomendado)
+    if "LINK_PLANILHA" in st.secrets:
+        URL_EDIT = st.secrets["LINK_PLANILHA"]
+    else:
+        URL_EDIT = None
+
     if "GOOGLE_API_KEY" in st.secrets:
         API_KEY = st.secrets["GOOGLE_API_KEY"]
         HAS_AI = True
@@ -28,20 +34,18 @@ except:
     st.error("Erro: Configure URLs e GOOGLE_API_KEY no secrets.toml")
     st.stop()
 
-# Colunas (Sua configuração original)
+# Colunas
 COL_TICKER = 0; COL_QTD = 5; COL_PRECO = 8; COL_PM = 9; COL_VP = 11; COL_DY = 17
 
-# --- CSS PROFISSIONAL (GRID LAYOUT PARA 5 CARDS) ---
+# --- CSS ---
 st.markdown("""
 <style>
-    /* Grid responsivo: Acomoda os 5 cards automaticamente */
     .kpi-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 15px;
         margin-bottom: 30px;
     }
-    
     .kpi-card {
         background-color: var(--background-secondary-color);
         border: 1px solid var(--text-color-20);
@@ -53,9 +57,8 @@ st.markdown("""
         flex-direction: column;
         justify-content: center;
         align-items: center;
-        height: 100%; /* Garante altura igual para todos */
+        height: 100%;
     }
-    
     .kpi-label { font-size: 0.8rem; opacity: 0.7; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
     .kpi-value { font-size: 1.5rem; font-weight: 800; color: #1f77b4; margin-bottom: 5px; }
     .kpi-delta { font-size: 0.75rem; font-weight: 600; padding: 2px 10px; border-radius: 10px; display: inline-block; }
@@ -142,16 +145,13 @@ def carregar_tudo():
     if df.empty: return df
     df = df.drop_duplicates(subset=["Ativo", "Tipo"], keep="first")
     
-    # Cálculos Fundamentais
+    # Cálculos
     df["Valor Atual"] = df.apply(lambda x: x["Qtd"] * x["Preço Atual"] if x["Tipo"] in ["FII", "Ação"] else x["Preço Atual"], axis=1)
-    
-    # --- CÁLCULO TOTAL INVESTIDO (CRÍTICO) ---
     df["Total Investido"] = df.apply(lambda x: x["Qtd"] * x["Preço Médio"] if x["Tipo"] in ["FII", "Ação"] and x["Preço Médio"] > 0 else x["Valor Atual"], axis=1)
-    
     df["Lucro R$"] = df["Valor Atual"] - df["Total Investido"]
     df["Renda Mensal"] = df.apply(lambda x: (x["Valor Atual"] * x["DY (12m)"] / 12) if x["Tipo"] == "FII" else 0.0, axis=1)
     
-    # Limpeza Nuclear (Remove erros de visualização)
+    # Limpeza
     df.replace([np.inf, -np.inf], 0.0, inplace=True)
     cols_num = ["Valor Atual", "Total Investido", "Preço Atual", "VP", "DY (12m)", "Renda Mensal", "Lucro R$"]
     for col in cols_num:
@@ -182,11 +182,9 @@ def analisar_carteira(df):
         3. **Alertas:** Ativos caros ou com fundamentos ruins.
         4. **Ação Recomendada:** Onde aportar?
         """
-        # Endpoint Genérico do Google (Funciona para flash, pro, etc)
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={API_KEY}"
         headers = {'Content-Type': 'application/json'}
         data = {"contents": [{"parts": [{"text": prompt}]}]}
-        
         response = requests.post(url, headers=headers, data=json.dumps(data))
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text']
@@ -202,6 +200,7 @@ with col_btn:
 df = carregar_tudo()
 
 if not df.empty:
+    # --- DADOS ---
     patrimonio = df["Valor Atual"].sum()
     investido = df["Total Investido"].sum()
     val_rs = patrimonio - investido
@@ -212,7 +211,7 @@ if not df.empty:
     cls_val = "pos" if val_rs >= 0 else "neg"
     sinal = "+" if val_rs >= 0 else ""
 
-    # --- 5 CARDS NO GRID ---
+    # --- 5 CARDS ---
     st.markdown(f"""
     <div class="kpi-grid">
         <div class="kpi-card">
@@ -233,7 +232,7 @@ if not df.empty:
         <div class="kpi-card">
             <div class="kpi-label">Renda Mensal Est.</div>
             <div class="kpi-value">R$ {renda:,.2f}</div>
-            <div class="kpi-delta pos">Dividendos (Isento)</div>
+            <div class="kpi-delta pos">Dividendos</div>
         </div>
         <div class="kpi-card">
             <div class="kpi-label">Exposição FIIs</div>
@@ -243,6 +242,7 @@ if not df.empty:
     </div>
     """, unsafe_allow_html=True)
 
+    # --- IA & DADOS ---
     c_ia1, c_ia2 = st.columns([1, 4])
     with c_ia1:
         if st.button("🤖 Analisar com IA", type="primary", use_container_width=True):
@@ -309,5 +309,12 @@ if not df.empty:
             },
             hide_index=True, use_container_width=True, height=600
         )
-else:
-    st.info("Carregando... Verifique seus links.")
+
+# --- SIDEBAR (LINK PARA PLANILHA) ---
+with st.sidebar:
+    st.header("Ferramentas")
+    # Botão de Link para a Planilha (Se configurado nos Secrets)
+    if "LINK_PLANILHA" in st.secrets:
+        st.link_button("📂 Abrir Planilha Fonte", st.secrets["LINK_PLANILHA"])
+    else:
+        st.caption("Configure 'LINK_PLANILHA' nos segredos para ver o botão.")
