@@ -90,7 +90,7 @@ def carregar_dados():
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("Ferramentas")
-    if st.button("🧠 Gerar Prompt para IA"):
+    if st.button("Gerar Prompt para IA"):
         st.session_state['gerar_ia'] = True
     
     st.divider()
@@ -106,7 +106,7 @@ df = carregar_dados()
 if not df.empty:
     # --- ÁREA DE IA (Correção do Erro) ---
     if st.session_state.get('gerar_ia'):
-        with st.expander("🧠 Copie para o ChatGPT/Gemini:", expanded=True):
+        with st.expander("Copie para o ChatGPT/Gemini:", expanded=True):
             # Tenta usar markdown se tabulate estiver instalado, senão usa string simples
             try:
                 resumo_ia = df[["Ticker", "Qtd", "Preço Médio", "Preço Atual", "P/VP", "DY (12m)"]].to_markdown(index=False)
