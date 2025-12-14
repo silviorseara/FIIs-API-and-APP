@@ -143,7 +143,7 @@ def carregar_tudo():
     df.replace([np.inf, -np.inf], 0.0, inplace=True)
     return df
 
-# --- FUNÇÃO IA ---
+# --- FUNÇÃO IA (CORRIGIDA) ---
 def analisar_carteira(df):
     if not HAS_AI: return "⚠️ Chave de API não configurada."
     
@@ -169,7 +169,8 @@ def analisar_carteira(df):
         Seja breve, use tópicos e emojis. Não invente dados.
         """
         
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # MUDANÇA AQUI: Usando 'gemini-pro' que é mais estável para evitar erro 404
+        model = genai.GenerativeModel('gemini-pro')
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
