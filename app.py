@@ -2,31 +2,32 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import re
+import requests
+from bs4 import BeautifulSoup
 
 # ==========================================
-# ⚙️ CONFIGURAÇÃO DAS COLUNAS (AJUSTE AQUI!)
+# ⚙️ CONFIGURAÇÃO DE SEGURANÇA E COLUNAS
 # ==========================================
-# Busca a URL dentro dos segredos (ou coloque direto se for rodar local sem secrets)
 try:
-    SHEET_URL = st.secrets["SHEET_URL"]
+    # Tenta carregar as duas URLs dos segredos
+    URL_FIIS = st.secrets["SHEET_URL_FIIS"]
+    URL_MANUAL = st.secrets["SHEET_URL_MANUAL"]
 except:
-    # Fallback caso não tenha configurado secrets localmente
-    st.error("Configure o SHEET_URL no arquivo .streamlit/secrets.toml")
+    st.error("Erro Crítico: Configure 'SHEET_URL_FIIS' e 'SHEET_URL_MANUAL' no arquivo .streamlit/secrets.toml")
     st.stop()
 
-# Indique o número da coluna (A=0, B=1, C=2, D=3, E=4, ... I=8, ... R=17)
-COL_TICKER = 0   # Coluna A (Onde estão os códigos)
-COL_VP = 11       # Coluna B (Vem do Script)
-COL_QTD = 5      # <--- AJUSTE ISTO! (Onde está a Quantidade? Ex: Coluna D = 3)
-COL_PM = 9       # <--- AJUSTE ISTO! (Onde está o Preço Médio? Ex: Coluna E = 4)
-COL_PRECO = 8    # Coluna I (Vem do GoogleFinance)
-COL_DY = 17      # Coluna R (Vem do Script)
-# ==========================================
+# Configurações de Colunas (BASEADAS NO SEU AJUSTE ANTERIOR)
+COL_TICKER = 0   # Coluna A
+COL_QTD = 5      # Coluna F
+COL_PRECO = 8    # Coluna I (GoogleFinance)
+COL_PM = 9       # Coluna J
+COL_VP = 11      # Coluna L
+COL_DY = 17      # Coluna R
 
 # Configuração inicial do Streamlit
-st.set_page_config(page_title="Carteira FIIs Master", layout="wide", page_icon="🏢")
+st.set_page_config(page_title="Carteira Consolidada", layout="wide", page_icon="💎")
 
-# CSS para métricas e tabelas
+# CSS Elegante
 st.markdown("""
 <style>
     .metric-card { background-color: #f9f9f9; border-radius: 8px; padding: 15px; border: 1px solid #eee; }
@@ -34,172 +35,291 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_data(ttl=60)
-def carregar_dados():
+# --- FUNÇÕES AUXILIARES ---
+
+@st.cache_data(ttl=300)
+def get_stock_price(ticker):
     try:
-        df = pd.read_csv(SHEET_URL, header=None)
-        dados_limpos = []
+        url = f"https://investidor10.com.br/acoes/{ticker.lower()}/"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        resp = requests.get(url, headers=headers, timeout=5)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            val = soup.select_one("div._card.cotacao div.value span")
+            if val:
+                return float(val.get_text().replace("R$", "").replace(".", "").replace(",", ".").strip())
+    except: pass
+    return 0.0
 
-        for index, row in df.iterrows():
+def to_f(x): 
+    try:
+        if pd.isna(x) or str(x).strip() == "": return 0.0
+        return float(str(x).replace("R$","").replace("%","").replace(".","").replace(",","."))
+    except: return 0.0
+
+# --- CARREGAMENTO DE DADOS ---
+@st.cache_data(ttl=60)
+def carregar_tudo():
+    dados_consolidados = []
+
+    # 1. PLANILHA DE FIIs
+    try:
+        df_fiis = pd.read_csv(URL_FIIS, header=None)
+        for index, row in df_fiis.iterrows():
             try:
-                raw_ticker = str(row[COL_TICKER]).strip().upper()
-                if not re.match(r'^[A-Z]{4}11[B]?$', raw_ticker): continue
-
-                def get_float(val):
-                    if pd.isna(val) or str(val).strip() == "": return 0.0
-                    s = str(val).replace("R$", "").replace("%", "").replace(" ", "")
-                    s = s.replace(".", "").replace(",", ".")
-                    try: return float(s)
-                    except: return 0.0
-
-                item = {
-                    "Ticker": raw_ticker,
-                    "Qtd": get_float(row[COL_QTD]),
-                    "Preço Médio": get_float(row[COL_PM]),
-                    "Preço Atual": get_float(row[COL_PRECO]),
-                    "VP": get_float(row[COL_VP]),
-                    "DY (12m)": get_float(row[COL_DY]),
-                    "Link": f"https://investidor10.com.br/fiis/{raw_ticker.lower()}/"
-                }
+                raw = str(row[COL_TICKER]).strip().upper()
+                if not re.match(r'^[A-Z]{4}11[B]?$', raw): continue
                 
-                if item["Qtd"] > 0:
-                    dados_limpos.append(item)
+                qtd = to_f(row[COL_QTD])
+                if qtd > 0:
+                    preco_atual = to_f(row[COL_PRECO])
+                    dy_raw = to_f(row[COL_DY])
+                    dy_calc = dy_raw/100 if dy_raw > 2 else dy_raw 
+                    
+                    dados_consolidados.append({
+                        "Ativo": raw,
+                        "Tipo": "FII",
+                        "Qtd": qtd,
+                        "Preço Médio": to_f(row[COL_PM]),
+                        "Preço Atual": preco_atual,
+                        "Valor Atual": qtd * preco_atual,
+                        "VP": to_f(row[COL_VP]),
+                        "DY (12m)": dy_calc,
+                        "Link": f"https://investidor10.com.br/fiis/{raw.lower()}/"
+                    })
             except: continue
-
-        df_final = pd.DataFrame(dados_limpos)
-        if df_final.empty: return df_final
-
-        df_final = df_final.drop_duplicates(subset=["Ticker"], keep="first")
-
-        # Cálculos
-        df_final["Total Investido"] = df_final["Qtd"] * df_final["Preço Médio"]
-        df_final["Valor Atual"] = df_final["Qtd"] * df_final["Preço Atual"]
-        df_final["Lucro R$"] = df_final["Valor Atual"] - df_final["Total Investido"]
-        df_final["Var %"] = ((df_final["Valor Atual"] / df_final["Total Investido"]) - 1)
-        df_final["P/VP"] = df_final["Preço Atual"] / df_final["VP"]
-        
-        # Ajuste DY e Renda
-        df_final["DY (12m)"] = df_final["DY (12m)"].apply(lambda x: x/100 if x > 2 else x) 
-        df_final["Renda Mensal Est."] = (df_final["Valor Atual"] * df_final["DY (12m)"]) / 12
-
-        return df_final
     except Exception as e:
-        st.error(f"Erro: {e}")
-        return pd.DataFrame()
+        st.error(f"Erro FIIs: {e}")
+
+    # 2. PLANILHA MANUAL
+    try:
+        df_man = pd.read_csv(URL_MANUAL)
+        if len(df_man.columns) >= 4:
+            df_man = df_man.iloc[:, :4] 
+            df_man.columns = ["Ativo", "Tipo", "Qtd", "Valor"]
+            
+            for index, row in df_man.iterrows():
+                try:
+                    ativo = str(row["Ativo"]).strip().upper()
+                    if ativo in ["ATIVO", "TOTAL", "", "NAN"]: continue
+
+                    tipo_raw = str(row["Tipo"]).strip().upper()
+                    qtd = to_f(row["Qtd"])
+                    valor_input = to_f(row["Valor"])
+                    
+                    preco_atual = valor_input
+                    pm = 0.0
+                    tipo_final = "Outros"
+                    link = None
+
+                    if "AÇÃO" in tipo_raw or "ACAO" in tipo_raw:
+                        tipo_final = "Ação"
+                        pm = valor_input # Assume valor da planilha como PM inicial
+                        preco_live = get_stock_price(ativo)
+                        preco_atual = preco_live if preco_live > 0 else valor_input
+                        valor_total = qtd * preco_atual
+                        link = f"https://investidor10.com.br/acoes/{ativo.lower()}/"
+                    else:
+                        valor_total = valor_input
+                        qtd = 1
+
+                    if valor_total > 0:
+                        dados_consolidados.append({
+                            "Ativo": ativo,
+                            "Tipo": tipo_final,
+                            "Qtd": qtd,
+                            "Preço Médio": pm,
+                            "Preço Atual": preco_atual,
+                            "Valor Atual": valor_total,
+                            "VP": 0, "DY (12m)": 0, "Link": link
+                        })
+                except: continue
+    except Exception as e:
+        st.warning(f"Aba Manual vazia/erro: {e}")
+
+    df_final = pd.DataFrame(dados_consolidados)
+    if df_final.empty: return df_final
+    
+    # Cálculos Finais
+    df_final = df_final.drop_duplicates(subset=["Ativo", "Tipo"], keep="first")
+    
+    # Total Investido (Custo de Aquisição)
+    df_final["Total Investido"] = df_final.apply(
+        lambda x: (x["Qtd"] * x["Preço Médio"]) if x["Tipo"] in ["FII", "Ação"] and x["Preço Médio"] > 0 else x["Valor Atual"], 
+        axis=1
+    )
+    
+    df_final["Lucro R$"] = df_final["Valor Atual"] - df_final["Total Investido"]
+    
+    # Rentabilidade (%) - Proteção contra divisão por zero
+    df_final["Var %"] = df_final.apply(
+        lambda x: (x["Valor Atual"] / x["Total Investido"] - 1) if x["Total Investido"] > 0 else 0.0, 
+        axis=1
+    )
+    
+    # % na Carteira (Novo!)
+    patrimonio_total = df_final["Valor Atual"].sum()
+    df_final["% Carteira"] = df_final["Valor Atual"] / patrimonio_total if patrimonio_total > 0 else 0
+
+    return df_final
+
+# --- APP PRINCIPAL ---
+st.title("💰 Painel de Patrimônio Global")
+
+df = carregar_tudo()
+
+if not df.empty:
+    
+    # --- IA ---
+    if st.session_state.get('gerar_ia'):
+        with st.expander("🧠 Prompt IA:", expanded=True):
+            try:
+                df_ia = df[df["Tipo"] != "Outros"][["Ativo", "Tipo", "Qtd", "Preço Atual", "Valor Atual"]].copy()
+                df_ia["Valor Atual"] = df_ia["Valor Atual"].apply(lambda x: f"R$ {x:.2f}")
+                try: 
+                    import tabulate
+                    resumo = df_ia.to_markdown(index=False)
+                except: 
+                    resumo = df_ia.to_string(index=False)
+                prompt = f"Analise minha carteira de Renda Variável (RV):\nTotal RV: R$ {df[df['Tipo']!='Outros']['Valor Atual'].sum():,.2f}\n{resumo}\n1. Balanceamento FIIs/Ações.\n2. Riscos.\n3. Otimizações."
+                st.code(prompt, language="text")
+            except: pass
+
+    # --- KPIs ---
+    patrimonio = df["Valor Atual"].sum()
+    lucro_total = df["Lucro R$"].sum()
+    # Rentabilidade Global Ponderada
+    rent_total = (lucro_total / df["Total Investido"].sum()) if df["Total Investido"].sum() > 0 else 0
+    
+    grp = df.groupby("Tipo")["Valor Atual"].sum()
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Patrimônio Total", f"R$ {patrimonio:,.2f}")
+    c2.metric("Lucro Global", f"R$ {lucro_total:,.2f}", delta=f"{rent_total:.2%}")
+    c3.metric("FIIs", f"R$ {grp.get('FII', 0):,.2f}", delta=f"{grp.get('FII', 0)/patrimonio:.1%}")
+    c4.metric("Ações/Outros", f"R$ {grp.get('Ação', 0) + grp.get('Outros', 0):,.2f}", delta=f"{(grp.get('Ação', 0)+grp.get('Outros', 0))/patrimonio:.1%}")
+
+    st.divider()
+
+    # --- ABAS ---
+    tab1, tab2, tab3 = st.tabs(["📊 Distribuição", "💠 Análise Avançada", "📋 Detalhes"])
+
+    with tab1:
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            st.subheader("Por Classe")
+            fig1 = px.pie(df, values="Valor Atual", names="Tipo", hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
+            st.plotly_chart(fig1, use_container_width=True)
+        with col_g2:
+            st.subheader("Por Ativo (Treemap)")
+            fig2 = px.treemap(df, path=['Tipo', 'Ativo'], values='Valor Atual')
+            st.plotly_chart(fig2, use_container_width=True)
+
+    with tab2:
+        st.subheader("Quadrante Mágico: Barato vs Rentável")
+        
+        # Explicação do Gráfico
+        st.info("""
+        **Como interpretar este gráfico:**
+        * **Topo Esquerdo (🎯 Oportunidades):** DY Alto e P/VP Baixo. São fundos baratos que pagam bem.
+        * **Topo Direito:** DY Alto, mas P/VP Alto (Caros).
+        * **Baixo Esquerdo:** DY Baixo e P/VP Baixo (Descontados, mas pagam pouco).
+        * **Baixo Direito:** DY Baixo e P/VP Alto (Evitar).
+        * *O tamanho da bolha representa o valor investido.*
+        """)
+        
+        # Filtra só FIIs para o scatter plot
+        df_fii = df[df["Tipo"] == "FII"].copy()
+        if not df_fii.empty:
+            fig_scat = px.scatter(df_fii, x="P/VP", y="DY (12m)", size="Valor Atual", color="Ativo",
+                             hover_name="Ativo", text="Ativo")
+            fig_scat.add_hline(y=df_fii["DY (12m)"].mean(), line_dash="dot", annotation_text="Média DY")
+            fig_scat.add_vline(x=1, line_dash="dot", annotation_text="Preço Justo (1.0)")
+            st.plotly_chart(fig_scat, use_container_width=True)
+        
+        st.divider()
+        
+        # --- RADAR OPORTUNIDADES (ATUALIZADO) ---
+        st.subheader("🔎 Radar: Oportunidades (P/VP < 1.0)")
+        # Filtra e Seleciona Colunas
+        df_baratos = df[(df["P/VP"] < 1.0) & (df["P/VP"] > 0) & (df["Tipo"] == "FII")].copy()
+        
+        if not df_baratos.empty:
+            st.dataframe(
+                df_baratos,
+                column_order=("Link", "Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"),
+                column_config={
+                    "Link": st.column_config.LinkColumn("Info", display_text="🌐"),
+                    "Preço Atual": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "Valor Atual": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "P/VP": st.column_config.NumberColumn(format="%.2f"),
+                    "DY (12m)": st.column_config.NumberColumn(format="%.2%"),
+                    # Barra de progresso visual para % Carteira
+                    "% Carteira": st.column_config.ProgressColumn(
+                        format="%.2%", 
+                        min_value=0, 
+                        max_value=1, # Escala de 0 a 100%
+                        help="Quanto este ativo representa do seu patrimônio total"
+                    ),
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+        else:
+            st.success("Nenhum FII com P/VP < 1.0 encontrado.")
+
+    with tab3:
+        st.subheader("Carteira Detalhada (FIIs + Ações)")
+        
+        # Filtra Renda Variável
+        df_rv = df[df["Tipo"].isin(["FII", "Ação"])].copy()
+
+        # Tabela com formatação corrigida
+        st.dataframe(
+            df_rv,
+            column_order=("Link", "Ativo", "Tipo", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)"),
+            column_config={
+                "Link": st.column_config.LinkColumn("Site", display_text="🌐"),
+                "Preço Atual": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Valor Atual": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Qtd": st.column_config.NumberColumn(format="%.0f"), # Sem casas decimais para qtd
+                # CORREÇÃO DOS PERCENTUAIS AQUI:
+                "Var %": st.column_config.NumberColumn(
+                    "Rentabilidade", 
+                    format="%.2%", # Força formato porcentagem (x100)
+                    help="Lucro ou Prejuízo baseado no Preço Médio"
+                ),
+                "DY (12m)": st.column_config.NumberColumn(
+                    "DY (12m)", 
+                    format="%.2%" # Força formato porcentagem
+                ),
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+        
+        # Tabela de Outros (se houver)
+        df_outros = df[df["Tipo"] == "Outros"]
+        if not df_outros.empty:
+            st.markdown("### Outros Investimentos")
+            st.dataframe(
+                df_outros[["Ativo", "Valor Atual", "% Carteira"]],
+                column_config={
+                    "Valor Atual": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "% Carteira": st.column_config.NumberColumn(format="%.2%")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+
+else:
+    st.info("Carregando dados... Verifique se os links secretos estão corretos.")
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("Ferramentas")
-    if st.button("Gerar Prompt para IA"):
+    if st.button("🧠 Gerar Prompt IA"):
         st.session_state['gerar_ia'] = True
-    
-    st.divider()
     if st.button("🔄 Atualizar Dados"):
         st.cache_data.clear()
         st.rerun()
-
-# --- APP PRINCIPAL ---
-st.title("🏢 Dashboard FIIs Integrado")
-
-df = carregar_dados()
-
-if not df.empty:
-    # --- ÁREA DE IA (Correção do Erro) ---
-    if st.session_state.get('gerar_ia'):
-        with st.expander("Copie para o ChatGPT/Gemini:", expanded=True):
-            # Tenta usar markdown se tabulate estiver instalado, senão usa string simples
-            try:
-                resumo_ia = df[["Ticker", "Qtd", "Preço Médio", "Preço Atual", "P/VP", "DY (12m)"]].to_markdown(index=False)
-            except ImportError:
-                resumo_ia = df[["Ticker", "Qtd", "Preço Médio", "Preço Atual", "P/VP", "DY (12m)"]].to_string(index=False)
-                st.warning("Dica: Adicione 'tabulate' ao requirements.txt para uma formatação melhor.")
-
-            prompt = f"""
-Atue como Consultor Financeiro. Analise minha carteira de FIIs:
-Patrimônio: R$ {df["Valor Atual"].sum():,.2f}
-{resumo_ia}
-1. Analise a diversificação.
-2. Aponte FIIs descontados (P/VP < 1) mas sólidos.
-3. Sugira otimizações.
-            """
-            st.code(prompt, language="text")
-
-    # --- KPIs ---
-    patrimonio = df["Valor Atual"].sum()
-    investido = df["Total Investido"].sum()
-    lucro = patrimonio - investido
-    rentabilidade = (lucro / investido)
-    renda_est = df["Renda Mensal Est."].sum()
-    dy_medio_ponderado = (renda_est * 12) / patrimonio
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Patrimônio", f"R$ {patrimonio:,.2f}")
-    c2.metric("Lucro / Prejuízo", f"R$ {lucro:,.2f}", delta=f"{rentabilidade:.2%}")
-    c3.metric("Renda Mensal (Est.)", f"R$ {renda_est:,.2f}")
-    c4.metric("DY Carteira (Anual)", f"{dy_medio_ponderado:.2%}")
-
-    st.divider()
-
-    # --- GRÁFICOS (RESTAURADOS E NOVOS) ---
-    # Usando abas para manter organizado
-    tab1, tab2, tab3 = st.tabs(["📊 Alocação (Barras)", "💠 Oportunidades (Scatter)", "🍩 Distribuição (Pizza)"])
-
-    with tab1:
-        st.subheader("Quanto tenho em cada fundo?")
-        # O gráfico de barras horizontal que você gostava
-        fig_bar = px.bar(df.sort_values("Valor Atual", ascending=True), 
-                         x="Valor Atual", y="Ticker", orientation='h', text_auto='.2s',
-                         title="Patrimônio por Ativo")
-        st.plotly_chart(fig_bar, use_container_width=True)
-
-    with tab2:
-        st.subheader("Quadrante Mágico: Barato vs Rentável")
-        # O novo gráfico de bolhas
-        fig_scat = px.scatter(df, x="P/VP", y="DY (12m)", size="Valor Atual", color="Ticker",
-                         hover_name="Ticker", text="Ticker")
-        fig_scat.add_hline(y=df["DY (12m)"].mean(), line_dash="dot", annotation_text="Média DY")
-        fig_scat.add_vline(x=1, line_dash="dot", annotation_text="Preço Justo")
-        st.plotly_chart(fig_scat, use_container_width=True)
-
-    with tab3:
-        st.subheader("Peso na Carteira")
-        fig_pie = px.pie(df, values='Valor Atual', names='Ticker', hole=0.6)
-        st.plotly_chart(fig_pie, use_container_width=True)
-
-    st.divider()
-
-    # --- TABELAS ---
-    
-    # 1. RADAR (Restaurado e melhorado)
-    st.subheader("🔎 Radar: Oportunidades (P/VP < 1.0)")
-    df_baratos = df[df["P/VP"] < 1.0].sort_values("P/VP")[["Ticker", "Preço Atual", "VP", "P/VP", "DY (12m)"]]
-    
-    if not df_baratos.empty:
-        st.dataframe(
-            df_baratos.style.format({
-                "Preço Atual": "R$ {:.2f}", "VP": "R$ {:.2f}", "P/VP": "{:.2f}", "DY (12m)": "{:.2%}"
-            }).background_gradient(subset=["P/VP"], cmap="Greens_r"),
-            use_container_width=True
-        )
-    else:
-        st.success("Nenhum fundo descontado no momento.")
-
-    # 2. CARTEIRA DETALHADA (Com Links)
-    st.subheader("📋 Carteira Detalhada (Clique no 🌐 para abrir o site)")
-    st.dataframe(
-        df,
-        column_order=("Link", "Ticker", "Preço Atual", "P/VP", "DY (12m)", "Qtd", "Valor Atual", "Var %"),
-        column_config={
-            "Link": st.column_config.LinkColumn("Site", display_text="🌐"),
-            "Preço Atual": st.column_config.NumberColumn(format="R$ %.2f"),
-            "Valor Atual": st.column_config.NumberColumn(format="R$ %.2f"),
-            "P/VP": st.column_config.NumberColumn(format="%.2f"),
-            "DY (12m)": st.column_config.NumberColumn(format="%.2%"),
-            "Var %": st.column_config.NumberColumn(format="%.2%"),
-        },
-        hide_index=True,
-        use_container_width=True
-    )
-
-else:
-    st.info("Aguardando dados...")
