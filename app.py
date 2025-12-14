@@ -3,8 +3,8 @@ import pandas as pd
 import plotly.express as px
 import re
 import requests
+import json
 import numpy as np
-import google.generativeai as genai
 from bs4 import BeautifulSoup
 
 # ==========================================
@@ -15,9 +15,9 @@ st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💎")
 try:
     URL_FIIS = st.secrets["SHEET_URL_FIIS"]
     URL_MANUAL = st.secrets["SHEET_URL_MANUAL"]
-    # Configuração da IA
+    # Verifica API Key
     if "GOOGLE_API_KEY" in st.secrets:
-        genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+        API_KEY = st.secrets["GOOGLE_API_KEY"]
         HAS_AI = True
     else:
         HAS_AI = False
@@ -44,8 +44,6 @@ st.markdown("""
     .pos { color: #155724; background-color: #d4edda; }
     .neg { color: #721c24; background-color: #f8d7da; }
     .neu { color: #383d41; background-color: #e2e3e5; }
-    
-    /* Botão de Atualizar no Topo */
     .stButton button { width: 100%; border-radius: 8px; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
@@ -130,7 +128,7 @@ def carregar_tudo():
     df["Lucro R$"] = df["Valor Atual"] - df["Total Investido"]
     df["Renda Mensal"] = df.apply(lambda x: (x["Valor Atual"] * x["DY (12m)"] / 12) if x["Tipo"] == "FII" else 0.0, axis=1)
     
-    # Limpeza
+    # Limpeza (Correção Flags Vermelhas)
     cols_float = ["Valor Atual", "Total Investido", "Preço Atual", "VP", "DY (12m)", "Renda Mensal", "Lucro R$"]
     for col in cols_float: 
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
@@ -143,43 +141,46 @@ def carregar_tudo():
     df.replace([np.inf, -np.inf], 0.0, inplace=True)
     return df
 
-# --- FUNÇÃO IA (ATUALIZADA) ---
+# --- FUNÇÃO IA (MÉTODO HTTP PURO - BULLETPROOF) ---
 def analisar_carteira(df):
     if not HAS_AI: return "⚠️ Chave de API não configurada."
     
     try:
-        # Prepara resumo leve para economizar tokens
+        # Prepara dados
         df_resumo = df[df["Tipo"]!="Outros"][["Ativo", "Tipo", "Preço Atual", "P/VP", "DY (12m)", "Var %", "% Carteira"]].copy()
         csv_data = df_resumo.to_csv(index=False)
         
         prompt = f"""
         Você é um consultor financeiro sênior especializado em FIIs e Ações brasileiras.
         Analise a seguinte carteira (CSV abaixo) de forma direta e executiva:
-        
         {csv_data}
-
         Total Patrimônio: R$ {df['Valor Atual'].sum():.2f}
-        
         Gere uma resposta em Markdown com:
         1. **Diagnóstico Rápido:** Diversificação e Risco.
         2. **Oportunidades:** Ativos descontados (P/VP < 1.0) e bons pagadores.
         3. **Atenção:** Ativos caros ou com fundamentos duvidosos.
         4. **Próximos Passos:** Sugestão prática de aporte.
-        
         Seja breve. Use emojis.
         """
+
+        # CHAMADA HTTP DIRETA (Sem biblioteca do Google)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
+        headers = {'Content-Type': 'application/json'}
+        data = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
+        }
         
-        # Tenta o modelo Flash (mais rápido), se falhar tenta o Pro
-        try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            response = model.generate_content(prompt)
-        except:
-            model = genai.GenerativeModel('gemini-pro') # Fallback
-            response = model.generate_content(prompt)
+        response = requests.post(url, headers=headers, data=json.dumps(data))
+        
+        if response.status_code == 200:
+            return response.json()['candidates'][0]['content']['parts'][0]['text']
+        else:
+            return f"Erro na IA (Status {response.status_code}): {response.text}"
             
-        return response.text
     except Exception as e:
-        return f"Erro na IA: {str(e)}"
+        return f"Erro na conexão: {str(e)}"
 
 # --- APP LAYOUT ---
 col_tit, col_btn = st.columns([4, 1])
@@ -235,7 +236,7 @@ if not df.empty:
     with c_ia1:
         st.caption("Inteligência Artificial")
         if st.button("🤖 Analisar Carteira", type="primary", use_container_width=True):
-            with st.spinner("Analisando..."):
+            with st.spinner("Conectando ao Gemini..."):
                 analise = analisar_carteira(df)
                 st.session_state['analise_feita'] = analise
 
@@ -243,10 +244,10 @@ if not df.empty:
         if 'analise_feita' in st.session_state:
             st.info(st.session_state['analise_feita'])
         else:
-            st.markdown("*Clique no botão para gerar o diagnóstico da carteira.*")
+            st.markdown("*Clique no botão para gerar o diagnóstico.*")
     st.markdown("---")
 
-    # --- ABAS ---
+    # --- ABAS GRÁFICAS ---
     tab1, tab2, tab3 = st.tabs(["📊 Visão Geral", "🎯 Radar & Oportunidades", "📋 Inventário"])
 
     with tab1:
