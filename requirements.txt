@@ -9,3 +9,4 @@ plotly
 matplotlib
 requests
 tabulate
+google-generativeai
