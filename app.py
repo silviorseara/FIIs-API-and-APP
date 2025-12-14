@@ -141,7 +141,7 @@ def carregar_tudo():
     df.replace([np.inf, -np.inf], 0.0, inplace=True)
     return df
 
-# --- FUNÇÃO IA (MÉTODO HTTP PURO - BULLETPROOF) ---
+# --- FUNÇÃO IA (CORRIGIDA PARA GEMINI-PRO) ---
 def analisar_carteira(df):
     if not HAS_AI: return "⚠️ Chave de API não configurada."
     
@@ -163,8 +163,8 @@ def analisar_carteira(df):
         Seja breve. Use emojis.
         """
 
-        # CHAMADA HTTP DIRETA (Sem biblioteca do Google)
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
+        # MUDANÇA: USANDO O ENDPOINT DO GEMINI-PRO (ESTÁVEL)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={API_KEY}"
         headers = {'Content-Type': 'application/json'}
         data = {
             "contents": [{
