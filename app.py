@@ -164,10 +164,10 @@ def carregar_tudo():
     
     return df
 
-# --- FUNÇÃO IA QUE RETORNA O PROMPT EM CASO DE ERRO ---
+# --- FUNÇÃO IA ROBUSTA (RETORNA SUCESSO, TEXTO, PROMPT) ---
 def analisar_carteira(df):
-    # Prepara o prompt (usado no sucesso ou no erro)
     try:
+        # Prepara dados resumidos
         df_resumo = df[df["Tipo"]!="Outros"][["Ativo", "Tipo", "Preço Atual", "P/VP", "DY (12m)", "Var %"]].copy()
         csv_data = df_resumo.to_csv(index=False)
         prompt = f"""
@@ -185,11 +185,11 @@ def analisar_carteira(df):
         3. ⚠️ **Pontos de Atenção:** Ativos com P/VP > 1.10 ou fundamentos ruins.
         4. 🎯 **Ação:** Onde alocar o próximo aporte?
         """
-    except:
+    except Exception as e:
         return False, "Erro ao gerar dados", ""
 
     if not HAS_AI: 
-        return False, "Sem Chave API", prompt
+        return False, "Chave de API não configurada", prompt
     
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={API_KEY}"
@@ -200,10 +200,11 @@ def analisar_carteira(df):
         
         if response.status_code == 200:
             texto_ia = response.json()['candidates'][0]['content']['parts'][0]['text']
+            # Retorna: Sucesso=True, Resposta, Prompt (vazio pois não precisa)
             return True, texto_ia, prompt
         else:
-            # Retorna Falso e o Prompt para fazer manual
-            return False, "Erro API", prompt
+            # Retorna: Sucesso=False, Erro, Prompt (para o fallback)
+            return False, "Erro na API", prompt
             
     except Exception as e: 
         return False, str(e), prompt
@@ -226,42 +227,22 @@ with st.sidebar:
     else:
         st.caption("Sem link de planilha configurado.")
     
-    st.markdown("---")
+    st.divider()
     
     # 2. Botão IA (Só roda se clicar)
     if not df.empty:
         if st.button("🤖 Analisar com IA", type="primary", use_container_width=True):
             with st.spinner(f"Consultando {MODELO_IA}..."):
+                # Chama a função e guarda os 3 retornos
                 sucesso, resultado, prompt_usado = analisar_carteira(df)
-                # Salva no estado para não perder ao recarregar
+                
+                # Salva no Session State
+                st.session_state['ia_rodou'] = True
                 st.session_state['ia_sucesso'] = sucesso
                 st.session_state['ia_resultado'] = resultado
                 st.session_state['ia_prompt'] = prompt_usado
-                st.session_state['ia_rodou'] = True
 
 if not df.empty:
-    # --- EXIBIÇÃO DA IA (NO TOPO) ---
-    if st.session_state.get('ia_rodou'):
-        st.markdown("### 🤖 Análise Inteligente")
-        
-        if st.session_state['ia_sucesso']:
-            # Caso de Sucesso: Mostra a análise bonita
-            st.info(st.session_state['ia_resultado'])
-        else:
-            # Caso de Erro: Mostra o Fallback (Prompt + Botão)
-            st.warning("⚠️ A IA integrada está indisponível no momento. Use o modo manual:")
-            
-            c_manual1, c_manual2 = st.columns([3, 1])
-            with c_manual1:
-                st.text_area("Copie este Prompt:", value=st.session_state['ia_prompt'], height=150)
-            with c_manual2:
-                st.write("") # Espaço
-                st.write("") 
-                st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app", use_container_width=True)
-                st.caption("1. Copie o texto ao lado.\n2. Clique para abrir o Gemini.\n3. Cole e envie.")
-        
-        st.markdown("---")
-
     # --- DADOS ---
     patrimonio = df["Valor Atual"].sum()
     investido = df["Total Investido"].sum()
@@ -304,6 +285,30 @@ if not df.empty:
     </div>
     """, unsafe_allow_html=True)
 
+    # --- RESULTADO DA IA (ABAIXO DOS CARDS) ---
+    if st.session_state.get('ia_rodou'):
+        st.markdown("### 🤖 Análise Inteligente")
+        
+        if st.session_state['ia_sucesso']:
+            # SUCESSO: Mostra a resposta da IA
+            st.info(st.session_state['ia_resultado'])
+        else:
+            # ERRO: Mostra o Fallback para Manual
+            st.warning("⚠️ IA Indisponível no momento. Faça a análise manual:")
+            
+            c_man1, c_man2 = st.columns([3, 1])
+            with c_man1:
+                st.text_area("Copie este Prompt:", value=st.session_state['ia_prompt'], height=150)
+            with c_man2:
+                st.write("") # Espaçamento
+                st.write("")
+                # Link seguro para abrir o Gemini
+                st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app", use_container_width=True)
+                st.caption("1. Copie o texto.\n2. Abra o Gemini.\n3. Cole e envie.")
+        
+        st.divider()
+
+    # --- ABAS DE CONTEÚDO ---
     tab1, tab2, tab3 = st.tabs(["📊 Visão Geral", "🎯 Radar & Oportunidades", "📋 Inventário"])
 
     with tab1:
