@@ -38,18 +38,16 @@ except:
 # Colunas
 COL_TICKER = 0; COL_QTD = 5; COL_PRECO = 8; COL_PM = 9; COL_VP = 11; COL_DY = 17
 
-# --- CSS MODERN (MATERIAL / GLASS) ---
+# --- CSS MODERN ---
 st.markdown("""
 <style>
-    /* Grid */
     .kpi-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 20px;
-        margin-bottom: 40px;
+        gap: 15px;
+        margin-bottom: 30px;
     }
     
-    /* CARD KPI */
     .kpi-card {
         background-color: var(--background-secondary-color);
         border: 1px solid rgba(128, 128, 128, 0.1); 
@@ -62,32 +60,39 @@ st.markdown("""
         justify-content: center;
         align-items: center;
         height: 100%;
-        transition: transform 0.2s;
     }
-    .kpi-card:hover { transform: translateY(-2px); }
 
-    /* CARD OPORTUNIDADE */
+    /* CARD OPORTUNIDADE (Novo Layout) */
     .opp-card {
-        background: linear-gradient(135deg, rgba(20, 184, 166, 0.1) 0%, rgba(16, 185, 129, 0.15) 100%);
+        background: linear-gradient(135deg, rgba(20, 184, 166, 0.05) 0%, rgba(16, 185, 129, 0.1) 100%);
         border: 1px solid rgba(20, 184, 166, 0.3);
         border-radius: 16px;
-        padding: 20px;
+        padding: 16px;
         text-align: center;
         box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        height: 100%;
         display: flex;
         flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        height: 100%;
+        justify-content: space-between;
     }
-    .opp-badge { 
-        background-color: #ccfbf1; color: #0f766e; 
-        padding: 4px 10px; border-radius: 12px; 
-        font-size: 0.7rem; font-weight: 700; 
-        margin-bottom: 10px; text-transform: uppercase;
+    .opp-header {
+        display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
+        border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 8px;
     }
-    .opp-ticker { font-size: 1.5rem; font-weight: 800; color: #0f766e; margin-bottom: 5px; }
-    .opp-stats { font-size: 0.9rem; color: #333; font-weight: 500; display: flex; gap: 15px; justify-content: center; }
+    .opp-ticker { font-size: 1.4rem; font-weight: 800; color: #0f766e; }
+    .opp-price { font-size: 0.9rem; font-weight: 600; color: #555; }
+    
+    .opp-grid {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.85rem; text-align: left;
+    }
+    .opp-item { background: rgba(255,255,255,0.5); padding: 6px; border-radius: 8px; }
+    .opp-label { font-size: 0.7rem; color: #666; text-transform: uppercase; }
+    .opp-val { font-weight: 700; color: #333; }
+    
+    .opp-footer {
+        margin-top: 12px; background-color: #ccfbf1; color: #0f766e;
+        padding: 8px; border-radius: 8px; font-size: 0.85rem; font-weight: 700;
+    }
 
     .kpi-label { font-size: 0.75rem; opacity: 0.7; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
     .kpi-value { font-size: 1.7rem; font-weight: 700; color: var(--text-color); margin-bottom: 8px; }
@@ -281,11 +286,10 @@ if not df.empty:
     val_pct = val_rs / investido if investido > 0 else 0
     renda = df["Renda Mensal"].sum()
     fiis_total = df[df["Tipo"]=="FII"]["Valor Atual"].sum()
-    
     cls_val = "pos" if val_rs >= 0 else "neg"
     sinal = "+" if val_rs >= 0 else ""
 
-    # --- CARDS PRINCIPAIS ---
+    # --- 5 CARDS PRINCIPAIS ---
     st.markdown(f"""
     <div class="kpi-grid">
         <div class="kpi-card">
@@ -316,8 +320,10 @@ if not df.empty:
     </div>
     """, unsafe_allow_html=True)
 
-    # --- OPORTUNIDADES (CORRIGIDO) ---
+    # --- DESTAQUE: OPORTUNIDADES (LÓGICA BLINDADA) ---
     media_peso = df["% Carteira"].mean()
+    
+    # 1. Filtra
     df_opp = df[
         (df["Tipo"] == "FII") & 
         (df["P/VP"] >= 0.80) & 
@@ -329,29 +335,59 @@ if not df.empty:
     if not df_opp.empty and not st.session_state.get('privacy_mode'):
         st.subheader("🎯 Oportunidades de Aporte")
         
-        # Criação de um Grid nativo do Streamlit para os cards
         cols = st.columns(len(df_opp))
         
-        # PREPARAÇÃO SEGURA DOS DADOS (CORREÇÃO DO ERRO)
-        # Seleciona e renomeia para evitar erro de índice/atributo
-        df_cards = df_opp[["Ativo", "Preço Atual", "P/VP", "DY (12m)"]].copy()
-        df_cards.columns = ["Ativo", "Preco", "PVP", "DY"]
-        
-        for idx, row in enumerate(df_cards.itertuples()):
+        # 2. Renomeia e simplifica para evitar erro de índice no loop
+        # Preparando os dados explicitamente para uso no HTML
+        cards_data = []
+        for index, row in df_opp.iterrows():
+            # Cálculos de quanto falta para a média
+            valor_meta = patrimonio * media_peso
+            falta_investir = valor_meta - row["Valor Atual"]
+            if falta_investir < 0: falta_investir = 0
+            
+            cards_data.append({
+                "Ativo": row["Ativo"],
+                "PVP": row["P/VP"],
+                "DY": row["DY (12m)"],
+                "Preco": row["Preço Atual"],
+                "Peso": row["% Carteira"],
+                "Falta": falta_investir
+            })
+
+        # 3. Renderiza os Cards
+        for idx, card in enumerate(cards_data):
             with cols[idx]:
                 st.markdown(f"""
                 <div class="opp-card">
-                    <div class="opp-badge">💎 Oportunidade</div>
-                    <div class="opp-ticker">{row.Ativo}</div>
-                    <div class="opp-stats">
-                        <span>P/VP: <b>{row.PVP:.2f}</b></span>
-                        <span>DY: <b>{row.DY:.1%}</b></span>
+                    <div class="opp-header">
+                        <div class="opp-ticker">{card['Ativo']}</div>
+                        <div class="opp-price">R$ {card['Preco']:.2f}</div>
                     </div>
-                    <div style="font-size: 0.8rem; margin-top: 5px; opacity: 0.8;">
-                        R$ {row.Preco:.2f}
+                    <div class="opp-grid">
+                        <div class="opp-item">
+                            <div class="opp-label">P/VP</div>
+                            <div class="opp-val">{card['PVP']:.2f}</div>
+                        </div>
+                        <div class="opp-item">
+                            <div class="opp-label">DY 12M</div>
+                            <div class="opp-val">{card['DY']:.1%}</div>
+                        </div>
+                        <div class="opp-item">
+                            <div class="opp-label">PESO ATUAL</div>
+                            <div class="opp-val">{card['Peso']:.1%}</div>
+                        </div>
+                        <div class="opp-item">
+                            <div class="opp-label">META MÉDIA</div>
+                            <div class="opp-val">{media_peso:.1%}</div>
+                        </div>
+                    </div>
+                    <div class="opp-footer">
+                        Aportar: R$ {card['Falta']:,.0f}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+        st.write("") 
         st.divider()
 
     # --- RESULTADO DA IA ---
@@ -409,7 +445,7 @@ if not df.empty:
             )
 
     with tab3:
-        st.subheader("Lista Completa")
+        st.subheader("Inventário Completo")
         tipos = st.multiselect("Filtrar:", df["Tipo"].unique(), default=df["Tipo"].unique())
         df_view = df[df["Tipo"].isin(tipos)].copy()
         cols_show = ["Link", "Ativo", "Tipo", "Preço Médio", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"]
