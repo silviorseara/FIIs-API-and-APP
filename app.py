@@ -17,12 +17,15 @@ st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💠")
 
 MODELO_IA = "gemini-2.5-flash-lite"
 
-# Colunas (Mantemos as essenciais para cálculo, ignoramos as de texto manual)
+# Mapeamento de Colunas (Excel -> Python Index)
 COL_TICKER = 0
 COL_QTD = 5
+COL_PRECO = 8
 COL_PM = 9
 COL_VP = 11
 COL_DY = 17
+COL_DATA_COM = 19
+COL_SETOR = 23
 
 try:
     URL_FIIS = st.secrets["SHEET_URL_FIIS"]
@@ -42,15 +45,40 @@ except:
     st.error("Erro: Configure URLs e GOOGLE_API_KEY no secrets.toml")
     st.stop()
 
-# --- CSS ---
+# --- CSS REFINADO ---
 st.markdown("""
 <style>
+    /* Grid */
     .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px; }
+    
+    /* Cards KPI */
     .kpi-card { background-color: var(--background-secondary-color); border: 1px solid rgba(128, 128, 128, 0.1); border-radius: 16px; padding: 24px 16px; text-align: center; box-shadow: 0 4px 6px -2px rgba(0, 0, 0, 0.05); height: 100%; display: flex; flex-direction: column; justify-content: center; }
     
-    .opp-card { background: linear-gradient(135deg, rgba(20, 184, 166, 0.05) 0%, rgba(16, 185, 129, 0.1) 100%); border: 1px solid rgba(20, 184, 166, 0.3); border-radius: 16px; padding: 16px; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.05); height: 100%; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px; }
+    /* CARD OPORTUNIDADE (Visual Limpo para integrar com botão) */
+    .opp-card {
+        background: linear-gradient(135deg, rgba(20, 184, 166, 0.05) 0%, rgba(16, 185, 129, 0.1) 100%);
+        border: 1px solid rgba(20, 184, 166, 0.3);
+        border-radius: 16px; /* Borda arredondada completa */
+        padding: 16px;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        height: 100%;
+        display: flex; flex-direction: column; justify-content: space-between;
+        margin-bottom: 10px; /* Espaço para o botão abaixo */
+    }
     
-    .alert-card { background: linear-gradient(135deg, rgba(255, 87, 34, 0.05) 0%, rgba(255, 152, 0, 0.1) 100%); border: 1px solid rgba(255, 87, 34, 0.3); border-radius: 16px; padding: 16px; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.05); height: 100%; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px; }
+    /* CARD ALERTA */
+    .alert-card {
+        background: linear-gradient(135deg, rgba(255, 87, 34, 0.05) 0%, rgba(255, 152, 0, 0.1) 100%);
+        border: 1px solid rgba(255, 87, 34, 0.3);
+        border-radius: 16px;
+        padding: 16px;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        height: 100%;
+        display: flex; flex-direction: column; justify-content: space-between;
+        margin-bottom: 10px;
+    }
 
     .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 8px; }
     .card-ticker { font-size: 1.4rem; font-weight: 800; color: #333; }
@@ -61,6 +89,7 @@ st.markdown("""
     .card-label { font-size: 0.65rem; color: #666; text-transform: uppercase; margin-bottom: 2px; }
     .card-val { font-weight: 700; color: #333; font-size: 0.9rem; }
     
+    /* Footer Informativo (Tag visual apenas) */
     .opp-footer { margin-top: 12px; background-color: #ccfbf1; color: #0f766e; padding: 6px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; }
     .alert-footer { margin-top: 12px; background-color: #ffccbc; color: #bf360c; padding: 6px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; }
 
@@ -69,7 +98,10 @@ st.markdown("""
     .kpi-delta { font-size: 0.75rem; font-weight: 600; padding: 4px 12px; border-radius: 20px; display: inline-block; }
     .pos { color: #065f46; background-color: #d1fae5; } .neg { color: #991b1b; background-color: #fee2e2; } .neu { color: #374151; background-color: #f3f4f6; }
     
+    /* Botões Full Width */
     .stButton button { width: 100%; border-radius: 10px; font-weight: 600; height: 40px; }
+    
+    /* Barra de Progresso */
     .stProgress > div > div > div > div { background-color: #0f766e; }
 </style>
 """, unsafe_allow_html=True)
@@ -93,70 +125,40 @@ def get_ipca_acumulado_12m():
     except: pass
     return 0.045
 
-# --- NOVO SCRAPER ROBUSTO (PREÇO + SETOR + DATA COM) ---
-@st.cache_data(ttl=600) # Cache de 10 min
-def get_asset_data(ticker, tipo="fii"):
-    """Busca Preço, Setor e Data Com no Investidor10"""
-    data = {"preco": 0.0, "setor": "Outros", "data_com": "-"}
-    
+@st.cache_data(ttl=300)
+def get_stock_price(ticker):
     try:
-        url_base = "fiis" if tipo == "fii" else "acoes"
-        url = f"https://investidor10.com.br/{url_base}/{ticker.lower()}/"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        resp = requests.get(url, headers=headers, timeout=6)
-        
+        url = f"https://investidor10.com.br/acoes/{ticker.lower()}/"; headers = {'User-Agent': 'Mozilla/5.0'}
+        resp = requests.get(url, headers=headers, timeout=5)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            # 1. Preço
-            val_elem = soup.select_one("div._card.cotacao div.value span")
-            if val_elem:
-                data["preco"] = float(val_elem.get_text().replace("R$", "").replace(".", "").replace(",", ".").strip())
-            
-            # 2. Setor (Busca no cartão de informações)
-            # A estrutura varia, então buscamos por texto próximo
-            cards = soup.select("div.cell")
-            for card in cards:
-                title = card.select_one("span.title")
-                val = card.select_one("div.value") # ou span.value dependendo da pagina
-                if title and "Segmento" in title.get_text():
-                    data["setor"] = val.get_text().strip() if val else "Indefinido"
-                    break
-            
-            # 3. Data Com (Último Rendimento)
-            # Geralmente está em um card chamado "Último Rendimento"
-            # Vamos tentar pegar da tabela de dividendos se existir, ou do card
-            # Simplificação: Tenta achar o card de dividendos
-            div_cards = soup.select("div.databox")
-            for dc in div_cards:
-                title = dc.select_one("span.title")
-                if title and "Último Rendimento" in title.get_text():
-                    # Dentro pode ter a data. A estrutura é chata, vamos tentar algo genérico
-                    desc = dc.select_one("span.desc") # Às vezes a data está aqui
-                    if desc:
-                        # Tenta achar padrão de data DD/MM/AAAA
-                        match = re.search(r'\d{2}/\d{2}/\d{4}', desc.get_text())
-                        if match: data["data_com"] = match.group(0)
-                    break
-                    
+            val = soup.select_one("div._card.cotacao div.value span")
+            if val: return float(val.get_text().replace("R$", "").replace(".", "").replace(",", ".").strip())
     except: pass
-    return data
+    return 0.0
 
 @st.cache_data(ttl=3600)
 def obter_historico(tickers, periodo="6mo", benchmark="^BVSP"):
     if not tickers: return pd.DataFrame()
+    # Adiciona Benchmark
     tickers_sa = [f"{t}.SA" if not t.endswith(".SA") else t for t in tickers]
+    
+    # Define o ticker do benchmark
     bench_ticker = "^BVSP" if benchmark == "IBOV" else "IFIX.SA"
     tickers_sa.append(bench_ticker)
+    
     try:
         dados = yf.download(tickers_sa, period=periodo, progress=False)['Close']
         if isinstance(dados, pd.Series): dados = dados.to_frame(); dados.columns = tickers_sa
+        
+        # Limpeza de nomes
         cols_new = []
         for c in dados.columns:
             if c == "^BVSP": cols_new.append("IBOVESPA")
             elif c == "IFIX.SA": cols_new.append("IFIX")
             else: cols_new.append(c.replace(".SA", ""))
         dados.columns = cols_new
+        
         dados.dropna(axis=1, how='all', inplace=True)
         return dados
     except: return pd.DataFrame()
@@ -186,22 +188,20 @@ def carregar_tudo():
                 if qtd > 0:
                     dy_calc = to_f(row[COL_DY]) / 100 if to_f(row[COL_DY]) > 2.0 else to_f(row[COL_DY])
                     
-                    # --- BUSCA AUTOMÁTICA (SUBSTITUI PLANILHA) ---
-                    # Busca preço atual, setor e data com na web
-                    web_data = get_asset_data(raw, "fii")
+                    # Leitura SEGURA da coluna Setor
+                    try:
+                        setor = str(row[COL_SETOR]).strip()
+                        if setor == "" or setor.lower() == "nan": setor = "Indefinido"
+                    except: setor = "Indefinido"
                     
-                    # Preço: Usa web se achou, senão usa planilha
-                    pa = web_data["preco"] if web_data["preco"] > 0 else to_f(row[COL_PRECO])
+                    try:
+                        data_com = str(row[COL_DATA_COM]).strip()
+                    except: data_com = "-"
                     
                     dados.append({
-                        "Ativo": raw, "Tipo": "FII", 
-                        "Setor": web_data["setor"], # Automático
-                        "Qtd": qtd,
-                        "Preço Médio": to_f(row[COL_PM]), 
-                        "Preço Atual": pa,
-                        "VP": to_f(row[COL_VP]), 
-                        "DY (12m)": dy_calc, 
-                        "Data Com": web_data["data_com"], # Automático
+                        "Ativo": raw, "Tipo": "FII", "Setor": setor, "Qtd": qtd,
+                        "Preço Médio": to_f(row[COL_PM]), "Preço Atual": to_f(row[COL_PRECO]),
+                        "VP": to_f(row[COL_VP]), "DY (12m)": dy_calc, "Data Com": data_com,
                         "Link": f"https://investidor10.com.br/fiis/{raw.lower()}/"
                     })
             except: continue
@@ -218,15 +218,12 @@ def carregar_tudo():
                     if ativo in ["ATIVO", "TOTAL", "", "NAN"]: continue
                     tipo_raw = str(row["Tipo"]).strip().upper()
                     qtd = to_f(row["Qtd"]); val_input = to_f(row["Valor"])
-                    tipo = "Outros"; pm = 0.0; pa = val_input; link = None; setor="Ações"; dcom="-"
+                    tipo = "Outros"; pm = 0.0; pa = val_input; link = None; setor="Ação/Outros"; dcom="-"
                     if "AÇÃO" in tipo_raw or "ACAO" in tipo_raw:
                         tipo = "Ação"; pm = val_input
-                        # Busca web também para ações
-                        web_data = get_asset_data(ativo, "acoes")
-                        pa = web_data["preco"] if web_data["preco"] > 0 else val_input
-                        setor = web_data["setor"]
-                        
+                        plive = get_stock_price(ativo); pa = plive if plive > 0 else val_input
                         link = f"https://investidor10.com.br/acoes/{ativo.lower()}/"
+                        setor = "Ações"
                     else: qtd = 1
                     dados.append({
                         "Ativo": ativo, "Tipo": tipo, "Setor": setor, "Qtd": qtd,
@@ -300,7 +297,7 @@ with st.sidebar:
     
     st.divider()
     st.subheader("🎯 Metas (Termômetro)")
-    meta_renda = st.number_input("Meta Renda (R$)", value=15000, step=500)
+    meta_renda = st.number_input("Meta Renda (R$)", value=12500, step=500)
     
     if 'ipca_cache' not in st.session_state: st.session_state['ipca_cache'] = get_ipca_acumulado_12m()
     ipca_atual = st.session_state['ipca_cache']
@@ -343,7 +340,7 @@ if not df.empty:
         st.subheader("🎯 Oportunidades")
         cols = st.columns(len(df_opp))
         for idx, row in enumerate(df_opp.itertuples(index=False)):
-            # Recalcula variáveis
+            # Recalcula variáveis com segurança (usando iloc no dataframe filtrado)
             ativo = df_opp.iloc[idx]["Ativo"]
             preco = df_opp.iloc[idx]["Preço Atual"]
             pvp = df_opp.iloc[idx]["P/VP"]
@@ -404,14 +401,14 @@ if not df.empty:
     # --- ABAS ---
     t1, t2, t3, t4, t5 = st.tabs(["📊 Visão Setorial", "🎯 Matriz & Radar", "📋 Inventário", "📅 Agenda", "📈 Histórico"])
 
-    with t1: # GRÁFICO SETORIAL
+    with t1: # GRÁFICO SETORIAL CORRIGIDO
         c1, c2 = st.columns(2)
         with c1:
-            fig = px.sunburst(df, path=['Tipo', 'Setor', 'Ativo'], values='Valor Atual', color='Setor', title="Diversificação por Setor (Automático)")
+            fig = px.sunburst(df, path=['Tipo', 'Setor', 'Ativo'], values='Valor Atual', color='Setor', title="Diversificação (Baseado na Planilha)")
             st.plotly_chart(fig, use_container_width=True)
         with c2:
             top_s = df.groupby("Setor")["Valor Atual"].sum().sort_values(ascending=False).reset_index()
-            fig2 = px.bar(top_s, x="Valor Atual", y="Setor", orientation='h', title="Ranking de Setores")
+            fig2 = px.bar(top_s, x="Valor Atual", y="Setor", orientation='h', title="Exposição por Setor")
             st.plotly_chart(fig2, use_container_width=True)
 
     with t2: # MATRIZ + TABELA DESCONTOS (HEATMAP CORRIGIDO)
@@ -439,7 +436,7 @@ if not df.empty:
         if not df_ag.empty:
             st.dataframe(df_ag, column_config={"Link": st.column_config.LinkColumn("🔗")}, use_container_width=True)
         else:
-            st.info("Nenhuma 'Data Com' encontrada automaticamente.")
+            st.info("Nenhuma data 'Data Com' encontrada na coluna 19 da planilha.")
 
     with t5: # HISTÓRICO COM SELETOR
         st.subheader("📈 Rentabilidade Relativa")
