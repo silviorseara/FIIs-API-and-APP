@@ -12,7 +12,8 @@ from datetime import datetime, timedelta
 # ==========================================
 # ⚙️ CONFIGURAÇÃO
 # ==========================================
-st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💎")
+# Ícone da página agora é um gráfico minimalista
+st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💠")
 
 # Modelo IA
 MODELO_IA = "gemini-2.5-flash-lite"
@@ -20,6 +21,7 @@ MODELO_IA = "gemini-2.5-flash-lite"
 try:
     URL_FIIS = st.secrets["SHEET_URL_FIIS"]
     URL_MANUAL = st.secrets["SHEET_URL_MANUAL"]
+    
     if "LINK_PLANILHA" in st.secrets:
         URL_EDIT = st.secrets["LINK_PLANILHA"]
     else:
@@ -37,37 +39,84 @@ except:
 # Colunas
 COL_TICKER = 0; COL_QTD = 5; COL_PRECO = 8; COL_PM = 9; COL_VP = 11; COL_DY = 17
 
-# --- CSS ---
+# --- CSS MODERN (MATERIAL / GLASS) ---
 st.markdown("""
 <style>
+    /* Grid */
     .kpi-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 15px;
-        margin-bottom: 30px;
+        gap: 20px;
+        margin-bottom: 40px;
     }
+    
+    /* CARD ESTILO "GLASS/MATERIAL" */
     .kpi-card {
         background-color: var(--background-secondary-color);
-        border: 1px solid var(--text-color-20);
-        border-radius: 12px;
-        padding: 20px 10px;
+        /* Borda sutil translúcida */
+        border: 1px solid rgba(128, 128, 128, 0.1); 
+        border-radius: 16px; /* Arredondamento maior (Moderno) */
+        padding: 24px 16px;
         text-align: center;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        /* Sombra difusa e suave (Material Design 3) */
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
         display: flex;
         flex-direction: column;
         justify-content: center;
         align-items: center;
         height: 100%;
+        transition: transform 0.2s ease-in-out;
     }
-    .kpi-label { font-size: 0.8rem; opacity: 0.7; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
-    .kpi-value { font-size: 1.5rem; font-weight: 800; color: #1f77b4; margin-bottom: 5px; }
-    .kpi-delta { font-size: 0.75rem; font-weight: 600; padding: 2px 10px; border-radius: 10px; display: inline-block; }
     
-    .pos { color: #155724; background-color: #d4edda; }
-    .neg { color: #721c24; background-color: #f8d7da; }
-    .neu { color: #383d41; background-color: #e2e3e5; }
+    /* Efeito Hover sutil */
+    .kpi-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 10px 10px -5px rgba(0, 0, 0, 0.02);
+    }
+
+    .kpi-label {
+        font-family: 'Segoe UI', sans-serif;
+        font-size: 0.75rem;
+        opacity: 0.6;
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 1px; /* Espaçamento elegante */
+        font-weight: 600;
+    }
+
+    .kpi-value {
+        font-family: 'Segoe UI', sans-serif;
+        font-size: 1.7rem;
+        font-weight: 700;
+        color: var(--text-color); /* Usa a cor do tema (Preto ou Branco) */
+        margin-bottom: 8px;
+    }
+
+    .kpi-delta {
+        font-size: 0.75rem;
+        font-weight: 600;
+        padding: 4px 12px;
+        border-radius: 20px;
+        display: inline-block;
+    }
     
-    .stButton button { width: 100%; border-radius: 8px; font-weight: bold; }
+    /* Cores Pastel (Mais modernas que o neon anterior) */
+    .pos { color: #065f46; background-color: #d1fae5; border: 1px solid #a7f3d0; } /* Verde suave */
+    .neg { color: #991b1b; background-color: #fee2e2; border: 1px solid #fecaca; } /* Vermelho suave */
+    .neu { color: #374151; background-color: #f3f4f6; border: 1px solid #e5e7eb; } /* Cinza suave */
+    
+    /* Botões */
+    .stButton button {
+        width: 100%;
+        border-radius: 10px;
+        font-weight: 600;
+        border: none;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        transition: all 0.2s;
+    }
+    .stButton button:hover {
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -166,7 +215,7 @@ def carregar_tudo():
     
     # Limpeza
     df.replace([np.inf, -np.inf], 0.0, inplace=True)
-    cols_num = ["Valor Atual", "Total Investido", "Preço Atual", "VP", "DY (12m)", "Renda Mensal", "Lucro R$"]
+    cols_num = ["Valor Atual", "Total Investido", "Preço Atual", "VP", "DY (12m)", "Renda Mensal", "Lucro R$", "Preço Médio"]
     for col in cols_num:
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
@@ -185,6 +234,7 @@ def analisar_carteira(df):
         prompt = f"""
         Você é um consultor financeiro sênior (foco: FIIs e Ações Brasil).
         Analise a carteira abaixo com rigor técnico e brevidade.
+        
         DADOS:
         {csv_data}
         Patrimônio Total: R$ {df['Valor Atual'].sum():.2f}
@@ -210,22 +260,45 @@ def analisar_carteira(df):
         else: return False, "Erro API", prompt
     except Exception as e: return False, str(e), prompt
 
+# --- HELPER DE PRIVACIDADE ---
+def fmt(valor, prefix="R$ ", is_pct=False):
+    if st.session_state.get('privacy_mode'): return "••••••"
+    if is_pct: return f"{valor:.2%}" if isinstance(valor, (int, float)) else valor
+    return f"{prefix}{valor:,.2f}" if isinstance(valor, (int, float)) else valor
+
 # --- LAYOUT PRINCIPAL ---
-col_tit, col_btn = st.columns([4, 1])
-with col_tit: st.title("💎 Carteira Pro")
-with col_btn: 
-    if st.button("🔄 Atualizar Dados"): st.cache_data.clear(); st.rerun()
+c_top1, c_top2 = st.columns([6, 1])
+with c_top1: 
+    # Título com ícone moderno
+    st.markdown("## 💠 Carteira Pro")
+with c_top2: 
+    if st.button("↻ Atualizar"): st.cache_data.clear(); st.rerun()
 
 df = carregar_tudo()
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("Ferramentas")
-    if URL_EDIT: st.link_button("📂 Abrir Planilha Fonte", URL_EDIT)
-    else: st.caption("Sem link configurado.")
+    
+    if URL_EDIT:
+        # Ícone de Link limpo 🔗
+        st.link_button("🔗 Planilha Fonte", URL_EDIT)
+    else: st.caption("Sem link.")
+    
     st.divider()
+    
+    # Toggle de Privacidade (Guardando no Session State)
+    if 'privacy_mode' not in st.session_state: st.session_state['privacy_mode'] = False
+    
+    # Ícone de Cadeado 🔒
+    p_label = "🔒 Privacidade Ativa" if st.session_state['privacy_mode'] else "🔓 Privacidade Inativa"
+    st.session_state['privacy_mode'] = st.toggle(p_label, value=st.session_state['privacy_mode'])
+    
+    st.divider()
+    
     if not df.empty:
-        if st.button("🤖 Analisar com IA", type="primary", use_container_width=True):
+        # Ícone de Brilho ✨ para IA (Padrão moderno)
+        if st.button("✨ Analisar com IA", type="primary", use_container_width=True):
             with st.spinner(f"Consultando {MODELO_IA}..."):
                 sucesso, resultado, prompt_usado = analisar_carteira(df)
                 st.session_state['ia_rodou'] = True
@@ -240,44 +313,55 @@ if not df.empty:
     val_pct = val_rs / investido if investido > 0 else 0
     renda = df["Renda Mensal"].sum()
     fiis_total = df[df["Tipo"]=="FII"]["Valor Atual"].sum()
+    
     cls_val = "pos" if val_rs >= 0 else "neg"
     sinal = "+" if val_rs >= 0 else ""
 
+    # --- CARDS MODERNOS ---
     st.markdown(f"""
     <div class="kpi-grid">
         <div class="kpi-card">
-            <div class="kpi-label">Patrimônio Global</div>
-            <div class="kpi-value">R$ {patrimonio:,.2f}</div>
-            <div class="kpi-delta neu">Acumulado</div>
+            <div class="kpi-label">Patrimônio</div>
+            <div class="kpi-value">{fmt(patrimonio)}</div>
+            <div class="kpi-delta neu">Total</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-label">Total Investido</div>
-            <div class="kpi-value">R$ {investido:,.2f}</div>
-            <div class="kpi-delta neu">Custo Total</div>
+            <div class="kpi-label">Investido</div>
+            <div class="kpi-value">{fmt(investido)}</div>
+            <div class="kpi-delta neu">Custo</div>
         </div>
         <div class="kpi-card">
             <div class="kpi-label">Valorização</div>
-            <div class="kpi-value">R$ {val_rs:,.2f}</div>
-            <div class="kpi-delta {cls_val}">{sinal}{val_pct:.2%}</div>
+            <div class="kpi-value">{fmt(val_rs)}</div>
+            <div class="kpi-delta {cls_val}">{sinal}{fmt(val_pct, "", True)}</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-label">Renda Mensal Est.</div>
-            <div class="kpi-value">R$ {renda:,.2f}</div>
+            <div class="kpi-label">Renda Mensal</div>
+            <div class="kpi-value">{fmt(renda)}</div>
             <div class="kpi-delta pos">Dividendos</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-label">Exposição FIIs</div>
-            <div class="kpi-value">R$ {fiis_total:,.2f}</div>
-            <div class="kpi-delta neu">{(fiis_total/patrimonio if patrimonio>0 else 0):.1%} da Carteira</div>
+            <div class="kpi-label">FIIs</div>
+            <div class="kpi-value">{fmt(fiis_total)}</div>
+            <div class="kpi-delta neu">{fmt(fiis_total/patrimonio if patrimonio>0 else 0, "", True)} Carteira</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
+    # --- RESULTADO DA IA ---
     if st.session_state.get('ia_rodou'):
-        st.markdown("### 🤖 Análise Inteligente")
-        if st.session_state['ia_sucesso']: st.info(st.session_state['ia_resultado'])
+        c_head, c_close = st.columns([9, 1])
+        with c_head: st.markdown("### ✨ Insights da IA")
+        with c_close:
+            # Botão "X" minimalista
+            if st.button("✕", help="Fechar"):
+                st.session_state['ia_rodou'] = False
+                st.rerun()
+        
+        if st.session_state['ia_sucesso']:
+            st.info(st.session_state['ia_resultado'])
         else:
-            st.warning("⚠️ IA Indisponível. Use o modo manual:")
+            st.warning("IA Indisponível. Copie o prompt:")
             c1, c2 = st.columns([3, 1])
             with c1: st.text_area("Prompt:", value=st.session_state['ia_prompt'], height=150)
             with c2: 
@@ -285,7 +369,8 @@ if not df.empty:
                 st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app", use_container_width=True)
         st.divider()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Visão Geral", "🎯 Radar & Oportunidades", "📋 Inventário", "📈 Histórico"])
+    # --- ABAS ---
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Visão", "🎯 Oportunidades", "📋 Lista", "📈 Histórico"])
 
     with tab1:
         c1, c2 = st.columns(2)
@@ -299,87 +384,62 @@ if not df.empty:
             st.plotly_chart(fig2, use_container_width=True)
 
     with tab2:
-        st.subheader("Quadrante Mágico (FIIs)")
+        st.subheader("Matriz de Valor (FIIs)")
         df_fii = df[(df["Tipo"] == "FII") & (df["P/VP"] > 0) & (df["Valor Atual"] > 0)].copy()
         if not df_fii.empty:
             mean_dy = df_fii["DY (12m)"].mean()
-            fig = px.scatter(df_fii, x="P/VP", y="DY (12m)", size="Valor Atual", color="Ativo", text="Ativo", hover_data=["Preço Atual"])
-            fig.add_shape(type="rect", x0=0, y0=mean_dy, x1=1.0, y1=df_fii["DY (12m)"].max()*1.1, fillcolor="rgba(0,255,0,0.1)", line=dict(width=0), layer="below")
-            fig.add_annotation(x=0.5, y=df_fii["DY (12m)"].max(), text="OPORTUNIDADES", showarrow=False, font=dict(color="green", weight="bold"))
-            fig.add_shape(type="rect", x0=1.0, y0=0, x1=2.0, y1=df_fii["DY (12m)"].max()*1.1, fillcolor="rgba(255,0,0,0.1)", line=dict(width=0), layer="below")
-            fig.add_vline(x=1.0, line_dash="dot")
+            fig = px.scatter(df_fii, x="P/VP", y="DY (12m)", size="Valor Atual", color="Ativo", text="Ativo", hover_data=["Preço Atual"], template="plotly_white")
+            fig.add_shape(type="rect", x0=0, y0=mean_dy, x1=1.0, y1=df_fii["DY (12m)"].max()*1.1, fillcolor="rgba(0, 200, 83, 0.1)", line=dict(width=0), layer="below")
+            fig.add_vline(x=1.0, line_dash="dot", line_color="gray")
             st.plotly_chart(fig, use_container_width=True)
         st.divider()
-        st.subheader("🔥 Top Descontados")
+        st.subheader("🔥 Melhores Descontos")
         df_radar = df[(df["Tipo"] == "FII") & (df["P/VP"] < 1.0) & (df["P/VP"] > 0.1)].copy()
         if not df_radar.empty:
-            df_radar = df_radar.sort_values("P/VP")[["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"]]
             st.dataframe(
-                df_radar.style.format({
+                df_radar.sort_values("P/VP")[["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"]].style.format({
                     "Preço Atual": "R$ {:.2f}", "Valor Atual": "R$ {:.2f}", "P/VP": "{:.2f}",
                     "DY (12m)": "{:.2%}", "% Carteira": "{:.2%}"
-                }).background_gradient(subset=["P/VP"], cmap="RdYlGn_r").background_gradient(subset=["DY (12m)"], cmap="Greens"),
+                }).background_gradient(subset=["P/VP"], cmap="RdYlGn_r"),
                 use_container_width=True
             )
 
-    # --- TAB 3 COM ESTILIZAÇÃO E CORREÇÃO DE FLAGS ---
     with tab3:
-        st.subheader("Inventário Completo")
+        st.subheader("Lista Completa")
         tipos = st.multiselect("Filtrar:", df["Tipo"].unique(), default=df["Tipo"].unique())
         df_view = df[df["Tipo"].isin(tipos)].copy()
-        
-        # Seleciona Colunas para Exibir
         cols_show = ["Link", "Ativo", "Tipo", "Preço Médio", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"]
-        # Garante que existem
         df_view = df_view[[c for c in cols_show if c in df_view.columns]]
 
         st.dataframe(
-            df_view.style
-            .format({
-                "Preço Médio": "R$ {:.2f}",
-                "Preço Atual": "R$ {:.2f}",
-                "Valor Atual": "R$ {:.2f}",
-                "Renda Mensal": "R$ {:.2f}",
-                "Qtd": "{:.0f}",
-                "Var %": "{:.2%}",
-                "DY (12m)": "{:.2%}",
-                "% Carteira": "{:.2%}"
-            })
-            # Gradiente: Vermelho (Negativo) -> Amarelo -> Verde (Positivo)
-            .background_gradient(subset=["Var %"], cmap="RdYlGn", vmin=-0.5, vmax=0.5)
-            # Gradiente: Branco -> Verde
-            .background_gradient(subset=["DY (12m)"], cmap="Greens"),
-            
+            df_view.style.format({
+                "Preço Médio": "R$ {:.2f}", "Preço Atual": "R$ {:.2f}", "Valor Atual": "R$ {:.2f}", "Renda Mensal": "R$ {:.2f}",
+                "Qtd": "{:.0f}", "Var %": "{:.2%}", "DY (12m)": "{:.2%}", "% Carteira": "{:.2%}"
+            }).background_gradient(subset=["Var %"], cmap="RdYlGn", vmin=-0.5, vmax=0.5).background_gradient(subset=["DY (12m)"], cmap="Greens"),
             column_order=cols_show,
             column_config={
-                "Link": st.column_config.LinkColumn("", display_text="🌐", width="small"),
+                "Link": st.column_config.LinkColumn("", display_text="🔗", width="small"),
                 "% Carteira": st.column_config.ProgressColumn("Peso", format="%.2%", min_value=0, max_value=1),
             },
-            hide_index=True,
-            use_container_width=True,
-            height=600
+            hide_index=True, use_container_width=True, height=600
         )
 
     with tab4:
-        st.subheader("📈 Histórico de Rentabilidade")
+        st.subheader("📈 Tendência")
         ativos_bolsa = df[df["Tipo"].isin(["FII", "Ação"])]["Ativo"].tolist()
         if ativos_bolsa:
-            col_sel, col_per = st.columns([3, 1])
-            with col_sel:
+            c1, c2 = st.columns([3, 1])
+            with c1:
                 top_5 = df.sort_values("Valor Atual", ascending=False).head(5)["Ativo"].tolist()
-                ativos_sel = st.multiselect("Selecione os ativos:", ativos_bolsa, default=top_5)
-            with col_per:
-                periodo = st.selectbox("Período:", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=3)
+                sel = st.multiselect("Ativos:", ativos_bolsa, default=top_5)
+            with c2: per = st.selectbox("Prazo:", ["1mo", "6mo", "1y", "5y"], index=1)
             
-            if ativos_sel:
-                with st.spinner("Baixando cotações..."):
-                    hist_df = obter_historico(ativos_sel, periodo)
-                if not hist_df.empty:
-                    hist_norm = (hist_df / hist_df.iloc[0] - 1) * 100
-                    st.line_chart(hist_norm)
-                    st.caption(f"*Gráfico mostra a variação percentual (%) no período selecionado ({periodo}).*")
-                else: st.warning("Sem dados históricos.")
-        else: st.info("Sem ativos de bolsa.")
+            if sel:
+                with st.spinner("Carregando..."):
+                    hist = obter_historico(sel, per)
+                if not hist.empty:
+                    st.line_chart((hist / hist.iloc[0] - 1) * 100)
+        else: st.info("Sem dados.")
 
 else:
     st.info("Carregando... Verifique seus links.")
