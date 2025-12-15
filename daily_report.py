@@ -5,10 +5,10 @@ import json
 import os
 import sys
 import time
+import yfinance as yf # A chave para preços corretos
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
-from bs4 import BeautifulSoup
 
 # --- CONFIGURAÇÕES ---
 try:
@@ -21,7 +21,6 @@ except KeyError as e:
     print(f"Erro: Variável {e} não encontrada.")
     sys.exit(1)
 
-# Usando modelo estável para produção
 MODELO_IA = "gemini-2.5-flash-lite"
 
 # --- FUNÇÕES ---
@@ -32,38 +31,63 @@ def to_f(x):
 def real_br(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def get_price_web(ticker):
-    """Busca preço atualizado para bater com o App"""
+def atualizar_precos_yfinance(df_calc):
+    """Atualiza os preços usando Yahoo Finance (Blindado contra bloqueios)"""
+    print("🔄 Atualizando preços via Yahoo Finance...")
+    
+    # Prepara lista de tickers com sufixo .SA
+    tickers_map = {t: f"{t}.SA" for t in df_calc["Ativo"].unique()}
+    tickers_lista = list(tickers_map.values())
+    
     try:
-        url = f"https://investidor10.com.br/fiis/{ticker.lower()}/"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        resp = requests.get(url, headers=headers, timeout=5)
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            val = soup.select_one("div._card.cotacao div.value span")
-            if val: return float(val.get_text().replace("R$", "").replace(".", "").replace(",", ".").strip())
-    except: pass
-    return 0.0
+        # Baixa tudo de uma vez (Muito mais rápido e seguro)
+        dados_yf = yf.download(tickers_lista, period="1d", progress=False)['Close']
+        
+        # Pega o último preço disponível (iloc[-1])
+        if not dados_yf.empty:
+            precos_atuais = dados_yf.iloc[-1]
+            
+            # Atualiza o DataFrame linha a linha
+            for index, row in df_calc.iterrows():
+                ticker_sa = tickers_map.get(row["Ativo"])
+                if ticker_sa in precos_atuais:
+                    novo_preco = precos_atuais[ticker_sa]
+                    # Só atualiza se o preço for válido (>0)
+                    if novo_preco > 0:
+                        df_calc.at[index, "Preço Atual"] = float(novo_preco)
+                        # Recalcula valor total e P/VP com o novo preço
+                        df_calc.at[index, "Valor Atual"] = float(novo_preco) * row["Qtd"]
+                        vp = row["VP_Original"]
+                        df_calc.at[index, "P/VP"] = (novo_preco / vp) if vp > 0 else 0.0
+            
+            print("✅ Preços atualizados com sucesso!")
+        else:
+            print("⚠️ Yahoo Finance não retornou dados.")
+            
+    except Exception as e:
+        print(f"⚠️ Erro ao atualizar preços: {e}")
+        # Se der erro, mantém os preços da planilha (fallback)
+    
+    return df_calc
 
-def consultar_ia_com_retry(df, patrimonio, investido, tentativas=3):
+def consultar_ia_com_retry(df, patrimonio, investido, tentativas=5): # Aumentado para 5
     print("🤖 Consultando IA...")
     
-    # Resumo simplificado para a IA
+    # Resumo leve
     df_resumo = df[["Ativo", "Preço Atual", "P/VP", "DY (12m)"]].copy()
     csv_data = df_resumo.to_csv(index=False)
     
     prompt = f"""
-    Atue como consultor financeiro pessoal. Escreva um 'Morning Call' curto para o investidor.
+    Atue como consultor financeiro pessoal. Escreva um 'Morning Call' curto.
     
-    DADOS CARTEIRA:
+    DADOS ATUALIZADOS:
     {csv_data}
-    Patrimônio: R$ {patrimonio:.2f} | Investido: R$ {investido:.2f}
+    Patrimônio Hoje: R$ {patrimonio:.2f} | Investido: R$ {investido:.2f}
     
-    Tarefa: Gere um texto HTML (sem tags <html> ou <body>) com:
-    1. <b>Diagnóstico:</b> Visão geral rápida.
-    2. <b>Destaque:</b> Melhor oportunidade baseada em P/VP e DY hoje.
-    3. <b>Veredito:</b> Uma frase de fechamento.
-    Seja direto e motivador.
+    Tarefa: Gere um texto HTML (sem tags html/body) com:
+    1. <b>Diagnóstico:</b> Resumo da saúde da carteira.
+    2. <b>Destaque:</b> 1 ativo bom e barato para hoje.
+    3. <b>Veredito:</b> Frase final de orientação.
     """
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={GOOGLE_API_KEY}"
@@ -72,16 +96,28 @@ def consultar_ia_com_retry(df, patrimonio, investido, tentativas=3):
     
     for i in range(tentativas):
         try:
+            # Espera progressiva: 10s, 20s, 30s, 40s...
+            # Isso ajuda muito a evitar o erro 429
+            tempo_espera = 10 * (i + 1)
+            if i > 0:
+                print(f"⏳ Aguardando {tempo_espera}s para tentar novamente...")
+                time.sleep(tempo_espera)
+            
             response = requests.post(url, headers=headers, data=json.dumps(data))
+            
             if response.status_code == 200:
                 return response.json()['candidates'][0]['content']['parts'][0]['text']
+            elif response.status_code == 429:
+                print(f"⚠️ Cota excedida (429). Tentativa {i+1}/{tentativas}")
+            elif response.status_code == 503:
+                print(f"⚠️ Serviço instável (503). Tentativa {i+1}/{tentativas}")
             else:
-                print(f"Erro IA {response.status_code}. Tentativa {i+1}/{tentativas}")
-                time.sleep(2) # Espera 2s antes de tentar de novo
+                print(f"⚠️ Erro IA {response.status_code}")
+                
         except Exception as e:
             print(f"Exceção IA: {e}")
     
-    return "<i>IA indisponível no momento. Mas os dados da tabela estão atualizados!</i>"
+    return "<i>IA indisponível após várias tentativas. Tente novamente mais tarde.</i>"
 
 # --- MAIN ---
 def gerar_relatorio():
@@ -96,32 +132,33 @@ def gerar_relatorio():
         for index, row in df.iterrows():
             try:
                 raw = str(row[COL_TICKER]).strip().upper()
-                if not re.match(r'^[A-Z]{4}11[B]?$', raw): continue
+                if len(raw) < 5: continue 
                 
                 qtd = to_f(row[COL_QTD])
                 if qtd > 0:
-                    # Tenta pegar preço web (igual ao app), se falhar usa planilha
-                    preco_web = get_price_web(raw)
-                    pa = preco_web if preco_web > 0 else to_f(row[COL_PRECO_PLANILHA])
-                    
-                    dy_calc = to_f(row[COL_DY]) / 100 if to_f(row[COL_DY]) > 2.0 else to_f(row[COL_DY])
+                    pa_planilha = to_f(row[COL_PRECO_PLANILHA])
                     vp = to_f(row[COL_VP])
-                    pvp = pa/vp if vp > 0 else 0.0
+                    dy = to_f(row[COL_DY]) / 100 if to_f(row[COL_DY]) > 2.0 else to_f(row[COL_DY])
                     
                     dados.append({
                         "Ativo": raw,
-                        "Valor Atual": pa * qtd,
+                        "Qtd": qtd,
+                        "Valor Atual": pa_planilha * qtd, # Será atualizado
                         "Total Investido": to_f(row[COL_PM]) * qtd,
-                        "Preço Atual": pa,
-                        "P/VP": pvp,
-                        "DY (12m)": dy_calc
+                        "Preço Atual": pa_planilha,       # Será atualizado
+                        "VP_Original": vp,                # Guardado para recalculo
+                        "P/VP": 0.0,                      # Será recalculado
+                        "DY (12m)": dy
                     })
             except: continue
             
         df_calc = pd.DataFrame(dados)
         if df_calc.empty: return
 
-        # Totais
+        # --- ATUALIZAÇÃO REAL DE PREÇOS ---
+        df_calc = atualizar_precos_yfinance(df_calc)
+
+        # Totais Finais
         patrimonio = df_calc["Valor Atual"].sum()
         investido = df_calc["Total Investido"].sum()
         lucro = patrimonio - investido
@@ -129,7 +166,7 @@ def gerar_relatorio():
         # IA
         texto_ia = consultar_ia_com_retry(df_calc, patrimonio, investido)
         
-        # Oportunidades (Top 4)
+        # Oportunidades
         df_calc["% Carteira"] = df_calc["Valor Atual"] / patrimonio
         media_peso = df_calc["% Carteira"].mean()
         df_opp = df_calc[
@@ -145,8 +182,6 @@ def gerar_relatorio():
 def enviar_email(patrimonio, investido, lucro, df_opp, texto_ia):
     data_hoje = datetime.now().strftime("%d/%m/%Y")
     cor_res = "green" if lucro >= 0 else "red"
-    
-    # Limpa markdown simples se vier da IA
     texto_ia = texto_ia.replace("```html", "").replace("```", "")
     
     html = f"""
@@ -182,7 +217,7 @@ def enviar_email(patrimonio, investido, lucro, df_opp, texto_ia):
         
     html += """
             <br>
-            <center><a href="SEU_LINK_STREAMLIT_AQUI" style="background:#0f766e; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;">Abrir Painel</a></center>
+            <center><a href="#" style="background:#0f766e; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;">Abrir Painel</a></center>
         </div>
     </body>
     </html>
@@ -194,12 +229,15 @@ def enviar_email(patrimonio, investido, lucro, df_opp, texto_ia):
     msg['Subject'] = f"📈 Relatório {data_hoje}: {real_br(patrimonio)}"
     msg.attach(MIMEText(html, 'html'))
 
-    server = smtplib.SMTP('smtp.gmail.com', 587)
-    server.starttls()
-    server.login(EMAIL_USER, EMAIL_PASS)
-    server.send_message(msg)
-    server.quit()
-    print("✅ Enviado!")
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(EMAIL_USER, EMAIL_PASS)
+        server.send_message(msg)
+        server.quit()
+        print("✅ Enviado!")
+    except Exception as e:
+        print(f"❌ Erro SMTP: {e}")
 
 if __name__ == "__main__":
     gerar_relatorio()
