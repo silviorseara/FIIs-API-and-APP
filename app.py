@@ -25,7 +25,7 @@ COL_PM = 9
 COL_VP = 11
 COL_DY = 17
 COL_DATA_COM = 19
-COL_SETOR = 23
+COL_SETOR = 24
 
 try:
     URL_FIIS = st.secrets["SHEET_URL_FIIS"]
