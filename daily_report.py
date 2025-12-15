@@ -12,34 +12,30 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 
 # --- CONFIGURAÇÕES ---
-# Pega variáveis de ambiente (GitHub Actions)
 try:
     SHEET_URL_FIIS = os.environ.get("SHEET_URL_FIIS")
-    SHEET_URL_MANUAL = os.environ.get("SHEET_URL_MANUAL") # Opcional
+    SHEET_URL_MANUAL = os.environ.get("SHEET_URL_MANUAL") # Agora é obrigatório para bater o valor
     EMAIL_USER = os.environ["EMAIL_USER"]
     EMAIL_PASS = os.environ["EMAIL_PASS"]
     EMAIL_DESTINO = os.environ["EMAIL_DESTINO"]
     GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
 except KeyError as e:
-    print(f"Erro de Configuração: {e}")
+    print(f"Erro: Variável {e} não encontrada. Verifique os Segredos do GitHub.")
     sys.exit(1)
 
-MODELO_IA = "gemini-2.5-flash-lite"
+MODELO_IA = "gemini-1.5-flash" # Modelo mais leve e rápido para automação
 
-# --- FUNÇÕES DE AJUDA ---
+# --- FUNÇÕES ---
 def to_f(x):
-    try:
-        val = str(x).replace("R$", "").replace("%", "").replace(" ", "").replace(".", "").replace(",", ".")
-        return float(val) if val else 0.0
+    try: return float(str(x).replace("R$", "").replace("%", "").replace(" ", "").replace(".", "").replace(",", ".")) if pd.notna(x) else 0.0
     except: return 0.0
 
 def real_br(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# --- SCRAPER (Igual ao App para garantir mesmo preço) ---
 def get_price_web(ticker, tipo="fii"):
+    """Scraper robusto para FIIs e Ações"""
     try:
-        # Tenta Investidor10
         url_base = "fiis" if tipo == "fii" else "acoes"
         url = f"https://investidor10.com.br/{url_base}/{ticker.lower()}/"
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -51,18 +47,57 @@ def get_price_web(ticker, tipo="fii"):
     except: pass
     return 0.0
 
-# --- LÓGICA DE DADOS ---
-def carregar_dados():
-    print("📥 Baixando e processando dados...")
+def consultar_ia_com_retry(df, patrimonio, investido, tentativas=5):
+    print("🤖 Consultando IA...")
+    
+    # Resumo focado em FIIs para análise
+    df_resumo = df[df["Tipo"] == "FII"][["Ativo", "Preço Atual", "P/VP", "DY (12m)"]].copy()
+    csv_data = df_resumo.to_csv(index=False)
+    
+    prompt = f"""
+    Atue como consultor financeiro. Escreva um 'Morning Call' curto.
+    
+    DADOS CARTEIRA:
+    {csv_data}
+    Patrimônio Total (FIIs + Ações): R$ {patrimonio:.2f} | Investido: R$ {investido:.2f}
+    
+    Tarefa: Gere um texto HTML simples (sem tags html/body, apenas p, b, ul, li) com:
+    1. <b>Diagnóstico:</b> Visão geral rápida.
+    2. <b>Destaque:</b> 1 oportunidade de FII hoje.
+    3. <b>Veredito:</b> Frase motivacional curta.
+    """
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={GOOGLE_API_KEY}"
+    headers = {'Content-Type': 'application/json'}
+    data = {"contents": [{"parts": [{"text": prompt}]}]}
+    
+    for i in range(tentativas):
+        try:
+            # Espera progressiva (10s, 20s, 30s...) para vencer o erro 429
+            if i > 0: time.sleep(10 * i)
+            
+            response = requests.post(url, headers=headers, data=json.dumps(data))
+            if response.status_code == 200:
+                return response.json()['candidates'][0]['content']['parts'][0]['text']
+            else:
+                print(f"Erro IA {response.status_code}. Tentando novamente...")
+        except Exception as e:
+            print(f"Exceção IA: {e}")
+            time.sleep(5)
+    
+    return "<i>IA indisponível no momento. Tente novamente mais tarde.</i>"
+
+# --- MAIN ---
+def gerar_relatorio():
+    print("Iniciando processamento...")
     dados = []
     
-    # Índices (A=0, F=5, I=8, J=9, L=11, R=17)
-    COL_TICKER, COL_QTD, COL_PM, COL_PRECO, COL_VP, COL_DY = 0, 5, 9, 8, 11, 17
-
-    # 1. FIIs
+    # --- 1. PLANILHA DE FIIs ---
     if SHEET_URL_FIIS:
         try:
             df_fiis = pd.read_csv(SHEET_URL_FIIS, header=None)
+            COL_TICKER, COL_QTD, COL_PRECO, COL_PM, COL_VP, COL_DY = 0, 5, 8, 9, 11, 17
+            
             for index, row in df_fiis.iterrows():
                 try:
                     raw = str(row[COL_TICKER]).strip().upper()
@@ -70,32 +105,30 @@ def carregar_dados():
                     
                     qtd = to_f(row[COL_QTD])
                     if qtd > 0:
-                        # Preço: Tenta Web, senão Planilha
-                        web_price = get_price_web(raw, "fii")
-                        pa = web_price if web_price > 0 else to_f(row[COL_PRECO])
+                        web = get_price_web(raw, "fii")
+                        pa = web if web > 0 else to_f(row[COL_PRECO])
                         
                         dy_calc = to_f(row[COL_DY]) / 100 if to_f(row[COL_DY]) > 2.0 else to_f(row[COL_DY])
+                        vp = to_f(row[COL_VP])
+                        pvp = pa/vp if vp > 0 else 0.0
                         
                         dados.append({
-                            "Ativo": raw,
-                            "Tipo": "FII",
-                            "Qtd": qtd,
-                            "Preço Atual": pa,
-                            "Preço Médio": to_f(row[COL_PM]),
-                            "VP": to_f(row[COL_VP]),
-                            "DY (12m)": dy_calc
+                            "Ativo": raw, "Tipo": "FII", "Qtd": qtd,
+                            "Valor Atual": pa * qtd, "Total Investido": to_f(row[COL_PM]) * qtd,
+                            "Preço Atual": pa, "P/VP": pvp, "DY (12m)": dy_calc
                         })
                 except: continue
         except Exception as e: print(f"Erro FIIs: {e}")
 
-    # 2. Manual
+    # --- 2. PLANILHA MANUAL (AÇÕES/FUNDOS) ---
     if SHEET_URL_MANUAL:
         try:
             df_man = pd.read_csv(SHEET_URL_MANUAL)
-            # Ajuste conforme seu CSV manual (assumindo colunas padrão)
+            # Ajuste conforme seu CSV. Assumindo: Ativo, Tipo, Qtd, Valor
             if len(df_man.columns) >= 4:
                 df_man = df_man.iloc[:, :4]
                 df_man.columns = ["Ativo", "Tipo", "Qtd", "Valor"]
+                
                 for index, row in df_man.iterrows():
                     try:
                         ativo = str(row["Ativo"]).strip().upper()
@@ -108,99 +141,55 @@ def carregar_dados():
                         pa = val_input
                         tipo = "Outros"
                         
+                        # Se for Ação, tenta atualizar preço
                         if "AÇÃO" in tipo_raw or "ACAO" in tipo_raw:
                             tipo = "Ação"
-                            web_price = get_price_web(ativo, "acoes")
-                            pa = web_price if web_price > 0 else val_input
+                            web = get_price_web(ativo, "acoes")
+                            pa = web if web > 0 else val_input
+                            val_total = pa * qtd
+                            # Assume PM = Valor Input se não tiver histórico
+                            investido = val_total 
                         else:
-                            qtd = 1 # Fundos manuais/Renda fixa costumam ser qtd 1
+                            # Fundos/Renda Fixa: Valor Input é o total
+                            qtd = 1
+                            val_total = val_input
+                            investido = val_input
                         
                         dados.append({
-                            "Ativo": ativo,
-                            "Tipo": tipo,
-                            "Qtd": qtd,
-                            "Preço Atual": pa,
-                            "Preço Médio": 0.0, # Geralmente manual não tem PM detalhado aqui
-                            "VP": 0.0,
-                            "DY (12m)": 0.0
+                            "Ativo": ativo, "Tipo": tipo, "Qtd": qtd,
+                            "Valor Atual": val_total, "Total Investido": investido,
+                            "Preço Atual": pa, "P/VP": 0.0, "DY (12m)": 0.0
                         })
                     except: continue
         except Exception as e: print(f"Erro Manual: {e}")
 
-    # --- LIMPEZA CRÍTICA (IGUAL AO APP) ---
-    df = pd.DataFrame(dados)
-    if df.empty: return df
-    
-    # Remove duplicatas (Isso resolve o problema do valor maior)
-    df = df.drop_duplicates(subset=["Ativo", "Tipo"], keep="first")
-    
-    # Cálculos Finais
-    df["Valor Atual"] = df["Qtd"] * df["Preço Atual"]
-    
-    # Lógica de Investido (Se PM existe usa ele, senão usa Valor Atual)
-    df["Total Investido"] = df.apply(lambda x: x["Qtd"] * x["Preço Médio"] if x["Preço Médio"] > 0 else x["Valor Atual"], axis=1)
-    
-    # P/VP
-    df["P/VP"] = df.apply(lambda x: (x["Preço Atual"] / x["VP"]) if x["VP"] > 0 else 0.0, axis=1)
-    
-    return df
+    # --- CONSOLIDAÇÃO ---
+    df_calc = pd.DataFrame(dados)
+    if df_calc.empty: return
 
-# --- CONSULTA IA (COM RETRY AGRESSIVO) ---
-def consultar_ia(df, patrimonio, investido):
-    print("🤖 Consultando IA...")
-    
-    df_resumo = df[["Ativo", "Preço Atual", "P/VP", "DY (12m)"]].copy()
-    csv_data = df_resumo.to_csv(index=False)
-    
-    prompt = f"""
-    Você é um consultor financeiro. Escreva um 'Morning Call' curto para o investidor.
-    
-    DADOS CARTEIRA:
-    {csv_data}
-    Patrimônio: R$ {patrimonio:.2f} | Investido: R$ {investido:.2f}
-    
-    Responda em HTML (sem tags html/body) com 3 bullets:
-    1. <b>Diagnóstico:</b> Visão geral.
-    2. <b>Destaque:</b> Melhor oportunidade (P/VP e DY).
-    3. <b>Veredito:</b> Orientação rápida.
-    """
-    
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={GOOGLE_API_KEY}"
-    headers = {'Content-Type': 'application/json'}
-    data = {"contents": [{"parts": [{"text": prompt}]}]}
-    
-    # Tenta 5 vezes com espera crescente
-    for i in range(5):
-        try:
-            resp = requests.post(url, headers=headers, data=json.dumps(data))
-            if resp.status_code == 200:
-                return resp.json()['candidates'][0]['content']['parts'][0]['text']
-            else:
-                print(f"Erro IA {resp.status_code}. Tentando novamente...")
-                time.sleep(5 + (i * 5)) # 5s, 10s, 15s...
-        except: time.sleep(5)
-        
-    return "<i>IA indisponível no momento.</i>"
-
-# --- ENVIO DE E-MAIL ---
-def enviar_email(df):
-    patrimonio = df["Valor Atual"].sum()
-    investido = df["Total Investido"].sum()
+    # Totais Globais
+    patrimonio = df_calc["Valor Atual"].sum()
+    investido = df_calc["Total Investido"].sum()
     lucro = patrimonio - investido
     
     # IA
-    texto_ia = consultar_ia(df, patrimonio, investido)
+    texto_ia = consultar_ia_com_retry(df_calc, patrimonio, investido)
     
-    # Oportunidades
-    df["% Carteira"] = df["Valor Atual"] / patrimonio
-    media_peso = df["% Carteira"].mean()
-    df_opp = df[
-        (df["Tipo"] == "FII") & 
-        (df["P/VP"] >= 0.80) & (df["P/VP"] <= 0.90) & 
-        (df["DY (12m)"] > 0.10) & (df["% Carteira"] < media_peso)
-    ].sort_values("P/VP").head(4)
+    # Oportunidades (Apenas FIIs)
+    df_fiis_only = df_calc[df_calc["Tipo"] == "FII"].copy()
+    if not df_fiis_only.empty:
+        df_fiis_only["% Carteira"] = df_fiis_only["Valor Atual"] / patrimonio
+        media_peso = df_fiis_only["% Carteira"].mean()
+        df_opp = df_fiis_only[
+            (df_fiis_only["P/VP"] >= 0.80) & (df_fiis_only["P/VP"] <= 0.90) & 
+            (df_fiis_only["DY (12m)"] > 0.10) & (df_fiis_only["% Carteira"] < media_peso)
+        ].head(4)
+    else:
+        df_opp = pd.DataFrame()
 
-    # HTML
+    enviar_email(patrimonio, investido, lucro, df_opp, texto_ia)
+
+def enviar_email(patrimonio, investido, lucro, df_opp, texto_ia):
     data_hoje = datetime.now().strftime("%d/%m/%Y")
     cor_res = "green" if lucro >= 0 else "red"
     texto_ia = texto_ia.replace("```html", "").replace("```", "")
@@ -214,14 +203,14 @@ def enviar_email(df):
         </div>
         <div style="padding:20px; border:1px solid #ddd;">
             <table style="width:100%; margin-bottom:20px;">
-                <tr><td>Patrimônio:</td><td style="text-align:right;"><b>{real_br(patrimonio)}</b></td></tr>
-                <tr><td>Investido:</td><td style="text-align:right;">{real_br(investido)}</td></tr>
+                <tr><td>Patrimônio Total:</td><td style="text-align:right;"><b>{real_br(patrimonio)}</b></td></tr>
+                <tr><td>Total Investido:</td><td style="text-align:right;">{real_br(investido)}</td></tr>
                 <tr><td>Resultado:</td><td style="text-align:right; color:{cor_res};"><b>{real_br(lucro)}</b></td></tr>
             </table>
             <div style="background:#f0fdfa; padding:15px; border-left:4px solid #0f766e;">
                 {texto_ia}
             </div>
-            <h3>🎯 Oportunidades</h3>
+            <h3>🎯 Oportunidades (FIIs)</h3>
     """
     
     if not df_opp.empty:
@@ -231,8 +220,8 @@ def enviar_email(df):
         html += "</ul>"
     else: html += "<p>Sem oportunidades claras hoje.</p>"
         
-    html += """
-            <br><center><a href="SEU_LINK_STREAMLIT" style="background:#0f766e; color:white; padding:10px; text-decoration:none; border-radius:5px;">Abrir Painel</a></center>
+    html += f"""
+            <br><center><a href="https://fiis-api-and-app.onrender.com" style="background:#0f766e; color:white; padding:10px; text-decoration:none; border-radius:5px;">Abrir Painel</a></center>
         </div>
     </body>
     </html>
@@ -252,8 +241,4 @@ def enviar_email(df):
     except Exception as e: print(f"❌ Erro SMTP: {e}")
 
 if __name__ == "__main__":
-    df = carregar_dados()
-    if not df.empty:
-        enviar_email(df)
-    else:
-        print("Erro: DataFrame vazio.")
+    gerar_relatorio()
