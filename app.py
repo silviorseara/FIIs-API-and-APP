@@ -74,7 +74,6 @@ st.markdown("""
         display: flex;
         flex-direction: column;
         justify-content: space-between;
-        position: relative;
     }
     .opp-header {
         display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
@@ -96,12 +95,12 @@ st.markdown("""
         margin-bottom: 8px;
     }
     
-    /* Botão Link Externo (Estilo CSS puro) */
+    /* Botão Link Externo */
     .opp-link-btn {
         display: block; width: 100%; text-decoration: none;
         background-color: #fff; color: #0f766e; border: 1px solid #0f766e;
         padding: 6px 0; border-radius: 8px; font-size: 0.8rem; font-weight: 600;
-        transition: all 0.2s; cursor: pointer;
+        transition: all 0.2s; cursor: pointer; text-align: center;
     }
     .opp-link-btn:hover { background-color: #0f766e; color: #fff; }
 
@@ -238,14 +237,14 @@ def analisar_carteira(df):
         df_resumo = df[df["Tipo"]!="Outros"][["Ativo", "Tipo", "Preço Atual", "P/VP", "DY (12m)", "Var %"]].copy()
         csv_data = df_resumo.to_csv(index=False)
         prompt = f"""
-        Você é um consultor financeiro. Analise a carteira:
+        Você é um consultor financeiro sênior. Analise a carteira:
         {csv_data}
         Patrimônio: R$ {df['Valor Atual'].sum():.2f}. Investido: R$ {df['Total Investido'].sum():.2f}
         Gere Markdown curto e com emojis:
-        1. 📊 Diagnóstico Geral.
-        2. 💎 Oportunidades Claras.
-        3. ⚠️ Riscos Imediatos.
-        4. 🎯 Sugestão de Aporte.
+        1. 📊 Diagnóstico Geral (Diversificação/Risco).
+        2. 💎 Melhores Oportunidades (Baseado em P/VP e DY).
+        3. ⚠️ Riscos Imediatos (Ativos caros ou ruins).
+        4. 🎯 Sugestão Prática de Aporte.
         """
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={API_KEY}"
         headers = {'Content-Type': 'application/json'}
@@ -256,16 +255,20 @@ def analisar_carteira(df):
         else: return False, "Erro API", prompt
     except Exception as e: return False, str(e), prompt
 
-# --- IA: ANÁLISE ESPECÍFICA DO ATIVO ---
+# --- IA: ANÁLISE ATIVO ÚNICO (PROFUNDA) ---
 def analisar_ativo_unico(ativo, pvp, dy, preco):
+    # Prompt Enriquecido para análise qualitativa
     prompt = f"""
-    Analise o Fundo Imobiliário (FII) **{ativo}**.
-    Dados Atuais: Preço R$ {preco:.2f}, P/VP {pvp:.2f}, Dividend Yield {dy:.1%}.
+    Atue como um analista de FIIs sênior. Faça um Raio-X rápido e técnico do ativo **{ativo}**.
+    Dados de Mercado: Preço R$ {preco:.2f} | P/VP {pvp:.2f} | DY {dy:.1%}.
     
-    Responda em 3 bullet points curtos:
-    1. O que é o fundo (Setor/Tipo).
-    2. A métrica de preço está atrativa? (Sim/Não e porquê).
-    3. Veredito rápido: Compra ou Aguarda?
+    Utilize seu conhecimento interno sobre o fundo para avaliar:
+    1. 🏢 **Perfil e Gestão:** Qual o setor? A gestão é de qualidade/renomada?
+    2. 📉 **Risco e Alavancagem:** O fundo é muito alavancado? Tem histórico de problemas ou vacância alta?
+    3. 💰 **Valuation:** O preço atual (P/VP {pvp:.2f}) é uma oportunidade real ou uma "armadilha de valor"?
+    4. ⚖️ **Veredito:** Compra, Aguarda ou Venda? (Seja direto).
+    
+    Mantenha a resposta concisa (máximo 4 linhas por tópico). Use bullet points.
     """
     if not HAS_AI: return "Sem chave API."
     try:
@@ -275,7 +278,7 @@ def analisar_ativo_unico(ativo, pvp, dy, preco):
         response = requests.post(url, headers=headers, data=json.dumps(data))
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text']
-        return "Erro na análise."
+        return f"Erro na análise ({response.status_code})."
     except: return "Erro conexão."
 
 # --- HELPER PRIVACIDADE ---
@@ -303,7 +306,7 @@ with st.sidebar:
     st.session_state['privacy_mode'] = st.toggle(p_label, value=st.session_state['privacy_mode'])
     st.divider()
     if not df.empty:
-        if st.button("✨ Analisar com IA", type="primary", use_container_width=True):
+        if st.button("✨ Analisar Carteira (IA)", type="primary", use_container_width=True):
             with st.spinner(f"Consultando {MODELO_IA}..."):
                 sucesso, resultado, prompt_usado = analisar_carteira(df)
                 st.session_state['ia_rodou'] = True
@@ -379,7 +382,6 @@ if not df.empty:
 
         for idx, card in enumerate(cards_data):
             with cols[idx]:
-                # CARD HTML
                 st.markdown(f"""
                 <div class="opp-card">
                     <div class="opp-header">
@@ -407,22 +409,22 @@ if not df.empty:
                     <div class="opp-footer">
                         Aportar: {real_br(card['Falta'])}
                     </div>
-                    <a href="{card['Link']}" target="_blank" class="opp-link-btn">🌐 Ver no Site</a>
+                    <a href="{card['Link']}" target="_blank" class="opp-link-btn">🌐 Ver Detalhes</a>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # BOTÃO DE ANÁLISE IA (Nativo Streamlit, fora do HTML para funcionar)
+                # BOTÃO DE ANÁLISE IA
                 if st.button(f"✨ Analisar {card['Ativo']}", key=f"btn_ai_{card['Ativo']}", use_container_width=True):
-                    with st.spinner("Analisando ativo..."):
+                    with st.spinner("Acessando conhecimento do mercado..."):
                         res_ativo = analisar_ativo_unico(card['Ativo'], card['PVP'], card['DY'], card['Preco'])
                         st.session_state['analise_unica'] = {'ativo': card['Ativo'], 'texto': res_ativo}
 
-        # MOSTRAR RESULTADO DA ANÁLISE DE ATIVO ÚNICO
+        # MOSTRAR RESULTADO DA ANÁLISE ÚNICA
         if 'analise_unica' in st.session_state:
             st.write("")
             with st.container(border=True):
                 c_a, c_b = st.columns([9,1])
-                with c_a: st.markdown(f"### 🤖 Análise: {st.session_state['analise_unica']['ativo']}")
+                with c_a: st.markdown(f"### 🤖 Raio-X: {st.session_state['analise_unica']['ativo']}")
                 with c_b: 
                     if st.button("✕", key="close_single"): 
                         del st.session_state['analise_unica']
@@ -511,6 +513,7 @@ if not df.empty:
                 top_5 = df.sort_values("Valor Atual", ascending=False).head(5)["Ativo"].tolist()
                 sel = st.multiselect("Ativos:", ativos_bolsa, default=top_5)
             with c2: per = st.selectbox("Prazo:", ["1mo", "6mo", "1y", "5y"], index=1)
+            
             if sel:
                 with st.spinner("Carregando..."):
                     hist = obter_historico(sel, per)
