@@ -38,7 +38,7 @@ except:
 # Colunas
 COL_TICKER = 0; COL_QTD = 5; COL_PRECO = 8; COL_PM = 9; COL_VP = 11; COL_DY = 17
 
-# --- CSS MODERN ---
+# --- CSS ---
 st.markdown("""
 <style>
     .kpi-grid {
@@ -62,7 +62,7 @@ st.markdown("""
         height: 100%;
     }
 
-    /* CARD OPORTUNIDADE (Novo Layout) */
+    /* CARD OPORTUNIDADE */
     .opp-card {
         background: linear-gradient(135deg, rgba(20, 184, 166, 0.05) 0%, rgba(16, 185, 129, 0.1) 100%);
         border: 1px solid rgba(20, 184, 166, 0.3);
@@ -123,8 +123,21 @@ def get_stock_price(ticker):
 def to_f(x): 
     try:
         if pd.isna(x) or str(x).strip() == "": return 0.0
+        # Limpa tudo para o Python calcular (Formato US interno)
         return float(str(x).replace("R$","").replace("%","").replace(" ", "").replace(".","").replace(",", "."))
     except: return 0.0
+
+# --- FORMATAÇÃO BRASILEIRA (NOVO) ---
+def real_br(valor):
+    """Converte float para String R$ 1.000,00"""
+    if not isinstance(valor, (int, float)): return valor
+    # Formata como US e depois inverte pontuação
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+def pct_br(valor):
+    """Converte 0.10 para 10,00%"""
+    if not isinstance(valor, (int, float)): return valor
+    return f"{valor:.2%}".replace(".", ",")
 
 @st.cache_data(ttl=3600)
 def obter_historico(tickers, periodo="6mo"):
@@ -246,11 +259,12 @@ def analisar_carteira(df):
         else: return False, "Erro API", prompt
     except Exception as e: return False, str(e), prompt
 
-# --- HELPER PRIVACIDADE ---
+# --- HELPER PRIVACIDADE FORMATADO (BR) ---
 def fmt(valor, prefix="R$ ", is_pct=False):
     if st.session_state.get('privacy_mode'): return "••••••"
-    if is_pct: return f"{valor:.2%}" if isinstance(valor, (int, float)) else valor
-    return f"{prefix}{valor:,.2f}" if isinstance(valor, (int, float)) else valor
+    # Usa as funções de formatação BR
+    if is_pct: return pct_br(valor)
+    return real_br(valor)
 
 # --- LAYOUT PRINCIPAL ---
 c_top1, c_top2 = st.columns([6, 1])
@@ -320,10 +334,8 @@ if not df.empty:
     </div>
     """, unsafe_allow_html=True)
 
-    # --- DESTAQUE: OPORTUNIDADES (LÓGICA BLINDADA) ---
+    # --- DESTAQUE: OPORTUNIDADES ---
     media_peso = df["% Carteira"].mean()
-    
-    # 1. Filtra
     df_opp = df[
         (df["Tipo"] == "FII") & 
         (df["P/VP"] >= 0.80) & 
@@ -334,14 +346,10 @@ if not df.empty:
 
     if not df_opp.empty and not st.session_state.get('privacy_mode'):
         st.subheader("🎯 Oportunidades de Aporte")
-        
         cols = st.columns(len(df_opp))
         
-        # 2. Renomeia e simplifica para evitar erro de índice no loop
-        # Preparando os dados explicitamente para uso no HTML
         cards_data = []
         for index, row in df_opp.iterrows():
-            # Cálculos de quanto falta para a média
             valor_meta = patrimonio * media_peso
             falta_investir = valor_meta - row["Valor Atual"]
             if falta_investir < 0: falta_investir = 0
@@ -355,14 +363,14 @@ if not df.empty:
                 "Falta": falta_investir
             })
 
-        # 3. Renderiza os Cards
         for idx, card in enumerate(cards_data):
             with cols[idx]:
+                # Usando real_br e pct_br para formatar o HTML
                 st.markdown(f"""
                 <div class="opp-card">
                     <div class="opp-header">
                         <div class="opp-ticker">{card['Ativo']}</div>
-                        <div class="opp-price">R$ {card['Preco']:.2f}</div>
+                        <div class="opp-price">{real_br(card['Preco'])}</div>
                     </div>
                     <div class="opp-grid">
                         <div class="opp-item">
@@ -371,19 +379,19 @@ if not df.empty:
                         </div>
                         <div class="opp-item">
                             <div class="opp-label">DY 12M</div>
-                            <div class="opp-val">{card['DY']:.1%}</div>
+                            <div class="opp-val">{pct_br(card['DY'])}</div>
                         </div>
                         <div class="opp-item">
                             <div class="opp-label">PESO ATUAL</div>
-                            <div class="opp-val">{card['Peso']:.1%}</div>
+                            <div class="opp-val">{pct_br(card['Peso'])}</div>
                         </div>
                         <div class="opp-item">
                             <div class="opp-label">META MÉDIA</div>
-                            <div class="opp-val">{media_peso:.1%}</div>
+                            <div class="opp-val">{pct_br(media_peso)}</div>
                         </div>
                     </div>
                     <div class="opp-footer">
-                        Aportar: R$ {card['Falta']:,.0f}
+                        Aportar: {real_br(card['Falta'])}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -436,26 +444,41 @@ if not df.empty:
         st.subheader("🔥 Melhores Descontos")
         df_radar = df[(df["Tipo"] == "FII") & (df["P/VP"] < 1.0) & (df["P/VP"] > 0.1)].copy()
         if not df_radar.empty:
+            # APLICAÇÃO DE FORMATAÇÃO BRASILEIRA NA TABELA
             st.dataframe(
-                df_radar.sort_values("P/VP")[["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"]].style.format({
-                    "Preço Atual": "R$ {:.2f}", "Valor Atual": "R$ {:.2f}", "P/VP": "{:.2f}",
-                    "DY (12m)": "{:.2%}", "% Carteira": "{:.2%}"
-                }).background_gradient(subset=["P/VP"], cmap="RdYlGn_r"),
+                df_radar.sort_values("P/VP")[["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"]]
+                .style.format({
+                    "Preço Atual": real_br, 
+                    "Valor Atual": real_br, 
+                    "P/VP": "{:.2f}",
+                    "DY (12m)": pct_br, 
+                    "% Carteira": pct_br
+                })
+                .background_gradient(subset=["P/VP"], cmap="RdYlGn_r"),
                 use_container_width=True
             )
 
     with tab3:
-        st.subheader("Inventário Completo")
+        st.subheader("Lista Completa")
         tipos = st.multiselect("Filtrar:", df["Tipo"].unique(), default=df["Tipo"].unique())
         df_view = df[df["Tipo"].isin(tipos)].copy()
         cols_show = ["Link", "Ativo", "Tipo", "Preço Médio", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"]
         df_view = df_view[[c for c in cols_show if c in df_view.columns]]
 
+        # APLICAÇÃO DE FORMATAÇÃO BRASILEIRA NA TABELA COMPLETA
         st.dataframe(
             df_view.style.format({
-                "Preço Médio": "R$ {:.2f}", "Preço Atual": "R$ {:.2f}", "Valor Atual": "R$ {:.2f}", "Renda Mensal": "R$ {:.2f}",
-                "Qtd": "{:.0f}", "Var %": "{:.2%}", "DY (12m)": "{:.2%}", "% Carteira": "{:.2%}"
-            }).background_gradient(subset=["Var %"], cmap="RdYlGn", vmin=-0.5, vmax=0.5).background_gradient(subset=["DY (12m)"], cmap="Greens"),
+                "Preço Médio": real_br, 
+                "Preço Atual": real_br, 
+                "Valor Atual": real_br, 
+                "Renda Mensal": real_br,
+                "Qtd": "{:.0f}", 
+                "Var %": pct_br, 
+                "DY (12m)": pct_br, 
+                "% Carteira": pct_br
+            })
+            .background_gradient(subset=["Var %"], cmap="RdYlGn", vmin=-0.5, vmax=0.5)
+            .background_gradient(subset=["DY (12m)"], cmap="Greens"),
             column_order=cols_show,
             column_config={
                 "Link": st.column_config.LinkColumn("", display_text="🔗", width="small"),
