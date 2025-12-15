@@ -8,7 +8,6 @@ import numpy as np
 import yfinance as yf
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-# Importação da busca no YouTube
 from youtubesearchpython import VideosSearch
 
 # ==========================================
@@ -18,15 +17,15 @@ st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💠")
 
 MODELO_IA = "gemini-2.5-flash-lite"
 
-# CONFIGURAÇÃO DE COLUNAS (Índices Python: A=0, B=1...)
+# Mapeamento de Colunas (Excel -> Python Index)
 COL_TICKER = 0
 COL_QTD = 5
 COL_PRECO = 8
 COL_PM = 9
 COL_VP = 11
 COL_DY = 17
-COL_DATA_COM = 18 # Coluna 19 do Excel
-COL_SETOR = 22    # Coluna 23 do Excel
+COL_DATA_COM = 18
+COL_SETOR = 22
 
 try:
     URL_FIIS = st.secrets["SHEET_URL_FIIS"]
@@ -46,38 +45,63 @@ except:
     st.error("Erro: Configure URLs e GOOGLE_API_KEY no secrets.toml")
     st.stop()
 
-# --- CSS (MANTIDO O ESTILO QUE VOCÊ GOSTOU) ---
+# --- CSS REFINADO ---
 st.markdown("""
 <style>
+    /* Grid */
     .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px; }
-    .kpi-card { background-color: var(--background-secondary-color); border: 1px solid rgba(128, 128, 128, 0.1); border-radius: 16px; padding: 24px 16px; text-align: center; box-shadow: 0 4px 6px -2px rgba(0, 0, 0, 0.05); height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; }
     
-    /* CARD OPORTUNIDADE */
-    .opp-card { background: linear-gradient(135deg, rgba(20, 184, 166, 0.05) 0%, rgba(16, 185, 129, 0.1) 100%); border: 1px solid rgba(20, 184, 166, 0.3); border-radius: 16px; padding: 16px; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.05); height: 100%; display: flex; flex-direction: column; justify-content: space-between; }
+    /* Cards KPI */
+    .kpi-card { background-color: var(--background-secondary-color); border: 1px solid rgba(128, 128, 128, 0.1); border-radius: 16px; padding: 24px 16px; text-align: center; box-shadow: 0 4px 6px -2px rgba(0, 0, 0, 0.05); height: 100%; display: flex; flex-direction: column; justify-content: center; }
+    
+    /* CARD OPORTUNIDADE (Visual Limpo para integrar com botão) */
+    .opp-card {
+        background: linear-gradient(135deg, rgba(20, 184, 166, 0.05) 0%, rgba(16, 185, 129, 0.1) 100%);
+        border: 1px solid rgba(20, 184, 166, 0.3);
+        border-radius: 16px; /* Borda arredondada completa */
+        padding: 16px;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        height: 100%;
+        display: flex; flex-direction: column; justify-content: space-between;
+        margin-bottom: 10px; /* Espaço para o botão abaixo */
+    }
     
     /* CARD ALERTA */
-    .alert-card { background: linear-gradient(135deg, rgba(255, 87, 34, 0.05) 0%, rgba(255, 152, 0, 0.1) 100%); border: 1px solid rgba(255, 87, 34, 0.3); border-radius: 16px; padding: 16px; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.05); height: 100%; display: flex; flex-direction: column; justify-content: space-between; }
+    .alert-card {
+        background: linear-gradient(135deg, rgba(255, 87, 34, 0.05) 0%, rgba(255, 152, 0, 0.1) 100%);
+        border: 1px solid rgba(255, 87, 34, 0.3);
+        border-radius: 16px;
+        padding: 16px;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        height: 100%;
+        display: flex; flex-direction: column; justify-content: space-between;
+        margin-bottom: 10px;
+    }
 
     .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 8px; }
     .card-ticker { font-size: 1.4rem; font-weight: 800; color: #333; }
     .green-t { color: #0f766e; } .red-t { color: #c0392b; }
+    
     .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.8rem; text-align: left; }
     .card-item { background: rgba(255,255,255,0.6); padding: 8px; border-radius: 8px; }
     .card-label { font-size: 0.65rem; color: #666; text-transform: uppercase; margin-bottom: 2px; }
     .card-val { font-weight: 700; color: #333; font-size: 0.9rem; }
     
-    .opp-footer { margin-top: 12px; background-color: #ccfbf1; color: #0f766e; padding: 8px; border-radius: 8px; font-size: 0.85rem; font-weight: 700; margin-bottom: 8px; }
-    .alert-footer { margin-top: 12px; background-color: #ffccbc; color: #bf360c; padding: 8px; border-radius: 8px; font-size: 0.85rem; font-weight: 700; margin-bottom: 8px; }
-    
-    .link-btn { display: block; width: 100%; text-decoration: none; background-color: #fff; border: 1px solid #ccc; color: #555; padding: 6px 0; border-radius: 8px; font-size: 0.8rem; font-weight: 600; transition: all 0.2s; cursor: pointer; text-align: center; }
-    .link-btn:hover { background-color: #eee; }
+    /* Footer Informativo (Tag visual apenas) */
+    .opp-footer { margin-top: 12px; background-color: #ccfbf1; color: #0f766e; padding: 6px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; }
+    .alert-footer { margin-top: 12px; background-color: #ffccbc; color: #bf360c; padding: 6px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; }
+
     .kpi-label { font-size: 0.75rem; opacity: 0.7; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
-    .kpi-value { font-size: 1.7rem; font-weight: 700; color: var(--text-color); margin-bottom: 8px; }
+    .kpi-value { font-size: 1.7rem; font-weight: 700; color: var(--text-color); margin-bottom: 5px; }
     .kpi-delta { font-size: 0.75rem; font-weight: 600; padding: 4px 12px; border-radius: 20px; display: inline-block; }
     .pos { color: #065f46; background-color: #d1fae5; } .neg { color: #991b1b; background-color: #fee2e2; } .neu { color: #374151; background-color: #f3f4f6; }
-    .stButton button { width: 100%; border-radius: 10px; font-weight: 600; }
     
-    /* Barra de Progresso Customizada */
+    /* Botões Full Width */
+    .stButton button { width: 100%; border-radius: 10px; font-weight: 600; height: 40px; }
+    
+    /* Barra de Progresso */
     .stProgress > div > div > div > div { background-color: #0f766e; }
 </style>
 """, unsafe_allow_html=True)
@@ -89,7 +113,7 @@ def to_f(x):
     try: return float(str(x).replace("R$","").replace("%","").replace(" ", "").replace(".","").replace(",", ".")) if pd.notna(x) else 0.0
     except: return 0.0
 
-@st.cache_data(ttl=86400) # Cache 24h para Inflação
+@st.cache_data(ttl=86400)
 def get_ipca_acumulado_12m():
     try:
         url = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.433/dados/ultimos/12?formato=json"
@@ -99,7 +123,7 @@ def get_ipca_acumulado_12m():
             for item in dados: acumulado *= (1 + float(item['valor'])/100)
             return acumulado - 1
     except: pass
-    return 0.045 # Fallback
+    return 0.045
 
 @st.cache_data(ttl=300)
 def get_stock_price(ticker):
@@ -114,16 +138,27 @@ def get_stock_price(ticker):
     return 0.0
 
 @st.cache_data(ttl=3600)
-def obter_historico(tickers, periodo="6mo"):
+def obter_historico(tickers, periodo="6mo", benchmark="^BVSP"):
     if not tickers: return pd.DataFrame()
-    # Adiciona IBOV para benchmark
+    # Adiciona Benchmark
     tickers_sa = [f"{t}.SA" if not t.endswith(".SA") else t for t in tickers]
-    tickers_sa.append("^BVSP")
+    
+    # Define o ticker do benchmark
+    bench_ticker = "^BVSP" if benchmark == "IBOV" else "IFIX.SA"
+    tickers_sa.append(bench_ticker)
+    
     try:
         dados = yf.download(tickers_sa, period=periodo, progress=False)['Close']
         if isinstance(dados, pd.Series): dados = dados.to_frame(); dados.columns = tickers_sa
-        # Renomeia
-        dados.columns = [c.replace("^BVSP", "IBOVESPA").replace(".SA", "") for c in dados.columns]
+        
+        # Limpeza de nomes
+        cols_new = []
+        for c in dados.columns:
+            if c == "^BVSP": cols_new.append("IBOVESPA")
+            elif c == "IFIX.SA": cols_new.append("IFIX")
+            else: cols_new.append(c.replace(".SA", ""))
+        dados.columns = cols_new
+        
         dados.dropna(axis=1, how='all', inplace=True)
         return dados
     except: return pd.DataFrame()
@@ -152,15 +187,21 @@ def carregar_tudo():
                 qtd = to_f(row[COL_QTD])
                 if qtd > 0:
                     dy_calc = to_f(row[COL_DY]) / 100 if to_f(row[COL_DY]) > 2.0 else to_f(row[COL_DY])
-                    # Lendo Setor e Data Com das novas colunas
-                    setor = str(row[COL_SETOR]).strip() if pd.notna(row[COL_SETOR]) else "Outros"
-                    data_com = str(row[COL_DATA_COM]).strip() if pd.notna(row[COL_DATA_COM]) else "-"
+                    
+                    # Leitura SEGURA da coluna Setor
+                    try:
+                        setor = str(row[COL_SETOR]).strip()
+                        if setor == "" or setor.lower() == "nan": setor = "Indefinido"
+                    except: setor = "Indefinido"
+                    
+                    try:
+                        data_com = str(row[COL_DATA_COM]).strip()
+                    except: data_com = "-"
                     
                     dados.append({
-                        "Ativo": raw, "Tipo": "FII", "Qtd": qtd,
+                        "Ativo": raw, "Tipo": "FII", "Setor": setor, "Qtd": qtd,
                         "Preço Médio": to_f(row[COL_PM]), "Preço Atual": to_f(row[COL_PRECO]),
-                        "VP": to_f(row[COL_VP]), "DY (12m)": dy_calc, 
-                        "Setor": setor, "Data Com": data_com,
+                        "VP": to_f(row[COL_VP]), "DY (12m)": dy_calc, "Data Com": data_com,
                         "Link": f"https://investidor10.com.br/fiis/{raw.lower()}/"
                     })
             except: continue
@@ -182,11 +223,12 @@ def carregar_tudo():
                         tipo = "Ação"; pm = val_input
                         plive = get_stock_price(ativo); pa = plive if plive > 0 else val_input
                         link = f"https://investidor10.com.br/acoes/{ativo.lower()}/"
+                        setor = "Ações"
                     else: qtd = 1
                     dados.append({
-                        "Ativo": ativo, "Tipo": tipo, "Qtd": qtd,
+                        "Ativo": ativo, "Tipo": tipo, "Setor": setor, "Qtd": qtd,
                         "Preço Médio": pm, "Preço Atual": pa, "VP": 0.0, "DY (12m)": 0.0, 
-                        "Setor": setor, "Data Com": dcom, "Link": link
+                        "Data Com": dcom, "Link": link
                     })
                 except: continue
     except: pass
@@ -209,24 +251,11 @@ def carregar_tudo():
     df["% Carteira"] = df["Valor Atual"] / df["Valor Atual"].sum() if df["Valor Atual"].sum() > 0 else 0.0
     return df
 
-# --- IA GERAL ---
-def analisar_carteira(df):
-    try:
-        df_resumo = df[df["Tipo"]!="Outros"][["Ativo", "Tipo", "Preço Atual", "P/VP", "DY (12m)", "Var %"]].copy()
-        csv_data = df_resumo.to_csv(index=False)
-        prompt = f"Analise carteira:\n{csv_data}\nPatr: {df['Valor Atual'].sum()}. Inv: {df['Total Investido'].sum()}\nMarkdown curto:\n1.Diagnóstico\n2.Oportunidades\n3.Riscos\n4.Sugestão."
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={API_KEY}"
-        resp = requests.post(url, headers={'Content-Type': 'application/json'}, data=json.dumps({"contents": [{"parts": [{"text": prompt}]}]}))
-        if resp.status_code == 200: return True, resp.json()['candidates'][0]['content']['parts'][0]['text'], prompt
-        else: return False, "Erro API", prompt
-    except Exception as e: return False, str(e), ""
-
-# --- MODAL IA + VÍDEO ---
 @st.dialog("🤖 Análise Inteligente", width="large")
 def modal_analise(ativo, tipo_analise, **kwargs):
     st.empty()
     if tipo_analise == "compra":
-        prompt = f"Analise FII **{ativo}**.\nPreço R$ {kwargs['preco']:.2f} | P/VP {kwargs['pvp']:.2f} | DY {kwargs['dy']:.1%}.\n1.Perfil/Gestão\n2.Risco/Alavancagem\n3.Valuation\n4.Veredito(Compra/Aguarda)."
+        prompt = f"Analise FII **{ativo}** para COMPRA.\nPreço R$ {kwargs['preco']:.2f} | P/VP {kwargs['pvp']:.2f} | DY {kwargs['dy']:.1%}.\n1.Perfil/Gestão\n2.Risco/Alavancagem\n3.Valuation\n4.Veredito(Compra/Aguarda)."
     else:
         prompt = f"Analise VENDA FII **{ativo}**.\nPM R$ {kwargs['pm']:.2f} | Preço R$ {kwargs['preco']:.2f} | P/VP {kwargs['pvp']:.2f} | DY {kwargs['dy']:.1%}.\nMotivo: {kwargs['motivo']}.\n1.Diagnóstico\n2.Dilema\n3.Veredito."
 
@@ -234,7 +263,8 @@ def modal_analise(ativo, tipo_analise, **kwargs):
     with st.spinner(f"Analisando {ativo}..."):
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={API_KEY}"
-            resp = requests.post(url, headers={'Content-Type': 'application/json'}, data=json.dumps({"contents": [{"parts": [{"text": prompt}]}]}))
+            data = {"contents": [{"parts": [{"text": prompt}]}]}
+            resp = requests.post(url, headers={'Content-Type': 'application/json'}, data=json.dumps(data))
             if resp.status_code == 200:
                 txt = resp.json()['candidates'][0]['content']['parts'][0]['text']
                 st.markdown(txt)
@@ -266,20 +296,16 @@ with st.sidebar:
     st.session_state['privacy_mode'] = st.toggle("🔒 Privacidade", value=st.session_state['privacy_mode'])
     
     st.divider()
-    # --- TERMÔMETRO AUTOMÁTICO ---
     st.subheader("🎯 Metas (Termômetro)")
-    meta_renda = st.number_input("Meta Renda (R$)", value=15000, step=500)
+    meta_renda = st.number_input("Meta Renda (R$)", value=12500, step=500)
     
-    # IPCA
     if 'ipca_cache' not in st.session_state: st.session_state['ipca_cache'] = get_ipca_acumulado_12m()
     ipca_atual = st.session_state['ipca_cache']
     st.caption(f"IPCA (12m): **{ipca_atual:.2%}** (BCB)")
     
     st.divider()
     if not df.empty and st.button("✨ IA Geral", type="primary", use_container_width=True):
-        with st.spinner("..."):
-            s, r, p = analisar_carteira(df)
-            st.session_state.update({'ia_rodou': True, 'ia_sucesso': s, 'ia_resultado': r, 'ia_prompt': p})
+        pass # Placeholder
 
 if not df.empty:
     patr = df["Valor Atual"].sum(); renda = df["Renda Mensal"].sum(); investido = df["Total Investido"].sum()
@@ -287,10 +313,9 @@ if not df.empty:
     fiis_total = df[df["Tipo"]=="FII"]["Valor Atual"].sum()
     cls_val = "pos" if val_rs >= 0 else "neg"; sinal = "+" if val_rs >= 0 else ""
 
-    # TERMÔMETRO TOPO
+    # TERMÔMETRO
     perc_lib = renda / meta_renda if meta_renda > 0 else 0
     dy_real = ((renda*12)/patr if patr>0 else 0) - ipca_atual
-    
     c_t1, c_t2 = st.columns([3, 1])
     with c_t1: st.markdown(f"**🌡️ Liberdade Financeira:** {perc_lib:.1%} da Meta"); st.progress(min(perc_lib, 1.0))
     with c_t2: 
@@ -307,76 +332,97 @@ if not df.empty:
         <div class="kpi-card"><div class="kpi-label">FIIs</div><div class="kpi-value">{fmt(fiis_total)}</div><div class="kpi-delta neu">{fmt(fiis_total/patr if patr>0 else 0, "", True)} Carteira</div></div>
     </div>""", unsafe_allow_html=True)
 
-    if st.session_state.get('ia_rodou'):
-        c_h, c_c = st.columns([9, 1]); 
-        with c_h: st.markdown("### ✨ Análise Geral")
-        with c_c: 
-            if st.button("✕"): st.session_state['ia_rodou'] = False; st.rerun()
-        if st.session_state['ia_sucesso']: st.info(st.session_state['ia_resultado'])
-        else: st.code(st.session_state['ia_prompt'])
-
-    # --- OPORTUNIDADES & ALERTAS (CARDS MANTIDOS) ---
+    # --- OPORTUNIDADES ---
     media_peso = df["% Carteira"].mean(); media_dy = df["DY (12m)"].mean()
-    
     df_opp = df[(df["Tipo"]=="FII") & (df["P/VP"]>=0.8) & (df["P/VP"]<=0.9) & (df["DY (12m)"]>0.10) & (df["% Carteira"]<media_peso)].sort_values("P/VP").head(4)
+    
     if not df_opp.empty and not st.session_state.get('privacy_mode'):
         st.subheader("🎯 Oportunidades")
         cols = st.columns(len(df_opp))
-        cards_data = []
-        for index, row in df_opp.iterrows():
-            falta = (patr * media_peso) - row["Valor Atual"]
-            cards_data.append({"Ativo": row["Ativo"], "PVP": row["P/VP"], "DY": row["DY (12m)"], "Preco": row["Preço Atual"], "Peso": row["% Carteira"], "ValorTenho": row["Valor Atual"], "Falta": max(0, falta), "Link": row["Link"]})
-        
-        for idx, card in enumerate(cards_data):
+        for idx, row in enumerate(df_opp.itertuples(index=False)):
+            # Recalcula variáveis com segurança (usando iloc no dataframe filtrado)
+            ativo = df_opp.iloc[idx]["Ativo"]
+            preco = df_opp.iloc[idx]["Preço Atual"]
+            pvp = df_opp.iloc[idx]["P/VP"]
+            dy = df_opp.iloc[idx]["DY (12m)"]
+            peso = df_opp.iloc[idx]["% Carteira"]
+            valor_tem = df_opp.iloc[idx]["Valor Atual"]
+            falta = (patr * media_peso) - valor_tem
+            link = df_opp.iloc[idx]["Link"]
+
             with cols[idx]:
-                st.markdown(f"""<div class="opp-card"><div class="card-header"><div class="card-ticker green-t">{card['Ativo']}</div><div class="opp-price">{real_br(card['Preco'])}</div></div>
-                <div class="card-grid"><div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{card['PVP']:.2f}</div></div><div class="card-item"><div class="card-label">DY 12M</div><div class="card-val">{pct_br(card['DY'])}</div></div>
-                <div class="card-item"><div class="card-label">PESO</div><div class="card-val">{pct_br(card['Peso'])}</div></div><div class="card-item"><div class="card-label">TENHO</div><div class="card-val">{real_br(card['ValorTenho'])}</div></div></div>
-                <div class="opp-footer">Meta Média: {pct_br(media_peso)} <br>Aporte Sugerido: {real_br(card['Falta'])}</div><a href="{card['Link']}" target="_blank" class="link-btn">🌐 Ver Detalhes</a></div>""", unsafe_allow_html=True)
-                if st.button("✨ Raio-X", key=f"opp_{card['Ativo']}"): modal_analise(card['Ativo'], "compra", preco=card['Preco'], pvp=card['PVP'], dy=card['DY'])
+                st.markdown(f"""<div class="opp-card"><div class="card-header"><div class="card-ticker green-t">{ativo}</div><div class="opp-price">{real_br(preco)}</div></div>
+                <div class="card-grid"><div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{pvp:.2f}</div></div><div class="card-item"><div class="card-label">DY 12M</div><div class="card-val">{pct_br(dy)}</div></div>
+                <div class="card-item"><div class="card-label">PESO</div><div class="card-val">{pct_br(peso)}</div></div><div class="card-item"><div class="card-label">TENHO</div><div class="card-val">{real_br(valor_tem)}</div></div></div>
+                <div class="opp-footer">Meta Média: {pct_br(media_peso)} <br>Aporte Sugerido: {real_br(max(0, falta))}</div>
+                <a href="{link}" target="_blank" class="link-btn">🌐 Ver Detalhes</a></div>""", unsafe_allow_html=True)
+                
+                # Botão IA Full Width
+                if st.button(f"✨ Analisar {ativo}", key=f"opp_{ativo}", use_container_width=True): 
+                    modal_analise(ativo, "compra", preco=preco, pvp=pvp, dy=dy)
         st.divider()
 
+    # --- ALERTAS DE SAÍDA ---
     df_alert = df[(df["Tipo"]=="FII") & ((df["P/VP"]>1.1) | (df["DY (12m)"]<(media_dy*0.85)) | ((df["P/VP"]<0.7) & (df["DY (12m)"]<0.08)))].head(4)
     if not df_alert.empty and not st.session_state.get('privacy_mode'):
         st.subheader("⚠️ Radar de Atenção")
         cols = st.columns(len(df_alert))
-        alerts_data = []
-        for index, row in df_alert.iterrows():
-            mots = []; 
-            if row["P/VP"] > 1.1: mots.append("Caro")
-            if row["DY (12m)"] < (media_dy*0.85): mots.append("Baixo Yield")
-            if row["P/VP"] < 0.7 and row["DY (12m)"] < 0.08: mots.append("Armadilha?")
-            alerts_data.append({"Ativo": row["Ativo"], "PVP": row["P/VP"], "DY": row["DY (12m)"], "Preco": row["Preço Atual"], "PM": row["Preço Médio"], "Peso": row["% Carteira"], "Valor": row["Valor Atual"], "Link": row["Link"], "Motivo": " + ".join(mots)})
+        for idx, row in enumerate(df_alert.itertuples(index=False)):
+            # Recalcula variáveis
+            ativo = df_alert.iloc[idx]["Ativo"]
+            preco = df_alert.iloc[idx]["Preço Atual"]
+            pm = df_alert.iloc[idx]["Preço Médio"]
+            pvp = df_alert.iloc[idx]["P/VP"]
+            dy = df_alert.iloc[idx]["DY (12m)"]
+            peso = df_alert.iloc[idx]["% Carteira"]
+            valor_tem = df_alert.iloc[idx]["Valor Atual"]
+            link = df_alert.iloc[idx]["Link"]
+            
+            # Motivo
+            mots = []
+            if pvp > 1.1: mots.append("Caro")
+            if dy < (media_dy*0.85): mots.append("Baixo Yield")
+            if pvp < 0.7 and dy < 0.08: mots.append("Armadilha?")
+            motivo_txt = " + ".join(mots)
 
-        for idx, card in enumerate(alerts_data):
             with cols[idx]:
-                st.markdown(f"""<div class="alert-card"><div class="card-header"><div class="card-ticker red-t">{card['Ativo']}</div><div class="opp-price">{real_br(card['Preco'])}</div></div>
-                <div class="card-grid"><div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{card['PVP']:.2f}</div></div><div class="card-item"><div class="card-label">DY</div><div class="card-val">{pct_br(card['DY'])}</div></div>
-                <div class="card-item"><div class="card-label">MEU PM</div><div class="card-val">{real_br(card['PM'])}</div></div><div class="card-item"><div class="card-label">PESO</div><div class="card-val">{pct_br(card['Peso'])}</div></div>
-                <div class="card-item" style="grid-column: span 2;"><div class="card-label">TENHO (R$)</div><div class="card-val">{real_br(card['Valor'])}</div></div></div>
-                <div class="alert-footer" style="background:white; border:1px solid #ffccbc; color:#bf360c;">🚨 {card['Motivo']}</div><a href="{card['Link']}" target="_blank" class="link-btn">🌐 Ver Detalhes</a></div>""", unsafe_allow_html=True)
-                if st.button("🔍 Analisar", key=f"alert_{card['Ativo']}"): modal_analise(card['Ativo'], "venda", preco=card['Preco'], pm=card['PM'], pvp=card['PVP'], dy=card['DY'], motivo=card['Motivo'])
+                st.markdown(f"""<div class="alert-card"><div class="card-header"><div class="card-ticker red-t">{ativo}</div><div class="opp-price">{real_br(preco)}</div></div>
+                <div class="card-grid"><div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{pvp:.2f}</div></div><div class="card-item"><div class="card-label">DY</div><div class="card-val">{pct_br(dy)}</div></div>
+                <div class="card-item"><div class="card-label">MEU PM</div><div class="card-val">{real_br(pm)}</div></div><div class="card-item"><div class="card-label">PESO</div><div class="card-val">{pct_br(peso)}</div></div>
+                <div class="card-item" style="grid-column: span 2;"><div class="card-label">TENHO (R$)</div><div class="card-val">{real_br(valor_tem)}</div></div></div>
+                <div class="alert-footer" style="background:white; border:1px solid #ffccbc; color:#bf360c;">🚨 {motivo_txt}</div>
+                <a href="{link}" target="_blank" class="link-btn">🌐 Ver Detalhes</a></div>""", unsafe_allow_html=True)
+                
+                # Botão IA Full Width
+                if st.button(f"🔍 Diagnóstico", key=f"alert_{ativo}", use_container_width=True): 
+                    modal_analise(ativo, "venda", preco=preco, pm=pm, pvp=pvp, dy=dy, motivo=motivo_txt)
         st.divider()
 
-    # --- ABAS (NOVAS!) ---
-    t1, t2, t3, t4, t5 = st.tabs(["📊 Visão Setorial", "🎯 Matriz", "📋 Inventário", "📅 Agenda", "📈 Histórico"])
+    # --- ABAS ---
+    t1, t2, t3, t4, t5 = st.tabs(["📊 Visão Setorial", "🎯 Matriz & Radar", "📋 Inventário", "📅 Agenda", "📈 Histórico"])
 
-    with t1: # SETORES DA PLANILHA
+    with t1: # GRÁFICO SETORIAL CORRIGIDO
         c1, c2 = st.columns(2)
         with c1:
-            fig = px.sunburst(df, path=['Tipo', 'Setor', 'Ativo'], values='Valor Atual', color='Setor')
+            fig = px.sunburst(df, path=['Tipo', 'Setor', 'Ativo'], values='Valor Atual', color='Setor', title="Diversificação (Baseado na Planilha)")
             st.plotly_chart(fig, use_container_width=True)
         with c2:
             top_s = df.groupby("Setor")["Valor Atual"].sum().sort_values(ascending=False).reset_index()
-            fig2 = px.bar(top_s, x="Valor Atual", y="Setor", orientation='h')
+            fig2 = px.bar(top_s, x="Valor Atual", y="Setor", orientation='h', title="Exposição por Setor")
             st.plotly_chart(fig2, use_container_width=True)
 
-    with t2: # MATRIZ
+    with t2: # MATRIZ + TABELA DESCONTOS (HEATMAP CORRIGIDO)
+        st.subheader("Matriz de Valor (FIIs)")
         df_fii = df[(df["Tipo"]=="FII") & (df["P/VP"]>0)].copy()
         if not df_fii.empty:
             fig = px.scatter(df_fii, x="P/VP", y="DY (12m)", size="Valor Atual", color="Ativo", text="Ativo", template="plotly_white")
             fig.add_shape(type="rect", x0=0, y0=media_dy, x1=1.0, y1=df_fii["DY (12m)"].max()*1.1, fillcolor="rgba(0, 200, 83, 0.1)", line=dict(width=0), layer="below")
             fig.add_vline(x=1.0, line_dash="dot", line_color="gray"); st.plotly_chart(fig, use_container_width=True)
+        
+        st.divider(); st.subheader("🔥 Melhores Descontos")
+        df_radar = df[(df["Tipo"]=="FII") & (df["P/VP"]<1.0) & (df["P/VP"]>0.1)].copy()
+        if not df_radar.empty:
+            st.dataframe(df_radar.sort_values("P/VP")[["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"]].style.format({"Preço Atual": real_br, "Valor Atual": real_br, "P/VP": "{:.2f}", "DY (12m)": pct_br, "% Carteira": pct_br}).background_gradient(subset=["P/VP"], cmap="RdYlGn_r").background_gradient(subset=["DY (12m)"], cmap="Greens"), use_container_width=True)
 
     with t3: # INVENTÁRIO
         cols_show = ["Link", "Ativo", "Setor", "Preço Médio", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"]
@@ -384,18 +430,24 @@ if not df.empty:
         st.dataframe(df_inv.style.format({"Preço Médio": real_br, "Preço Atual": real_br, "Valor Atual": real_br, "Renda Mensal": real_br, "Qtd": "{:.0f}", "Var %": pct_br, "DY (12m)": pct_br, "% Carteira": pct_br}).background_gradient(subset=["Var %"], cmap="RdYlGn", vmin=-0.5, vmax=0.5).background_gradient(subset=["DY (12m)"], cmap="Greens"), column_config={"Link": st.column_config.LinkColumn("🔗"), "% Carteira": st.column_config.ProgressColumn("Peso")}, height=600)
 
     with t4: # AGENDA
-        st.subheader("📅 Data Com (Mês Atual)")
-        df_ag = df[df["Tipo"]=="FII"][["Ativo", "Data Com", "Link"]].copy()
-        st.dataframe(df_ag, column_config={"Link": st.column_config.LinkColumn("🔗")}, use_container_width=True)
+        st.subheader("📅 Status dos Dividendos (Data Com)")
+        # Filtra apenas quem tem Data Com preenchida
+        df_ag = df[(df["Tipo"]=="FII") & (df["Data Com"] != "-")][["Ativo", "Data Com", "Link"]].copy()
+        if not df_ag.empty:
+            st.dataframe(df_ag, column_config={"Link": st.column_config.LinkColumn("🔗")}, use_container_width=True)
+        else:
+            st.info("Nenhuma data 'Data Com' encontrada na coluna 19 da planilha.")
 
-    with t5: # HISTÓRICO + IBOV
+    with t5: # HISTÓRICO COM SELETOR
+        st.subheader("📈 Rentabilidade Relativa")
         ativos = df[df["Tipo"].isin(["FII", "Ação"])]["Ativo"].tolist()
         if ativos:
-            c_sel, c_p = st.columns([3, 1])
-            with c_sel: sel = st.multiselect("Comparar com IBOV:", ativos, default=ativos[:3])
-            with c_p: per = st.selectbox("Período:", ["1mo", "6mo", "1y", "5y"], index=1)
+            c_sel, c_p, c_b = st.columns([2, 1, 1])
+            with c_sel: sel = st.multiselect("Ativos:", ativos, default=ativos[:3])
+            with c_p: per = st.selectbox("Prazo:", ["1mo", "6mo", "1y", "5y"], index=1)
+            with c_b: bench = st.selectbox("Benchmark:", ["IBOV", "IFIX"], index=0)
             if sel:
                 with st.spinner("..."):
-                    hist = obter_historico(sel, per)
+                    hist = obter_historico(sel, per, bench)
                 if not hist.empty: st.line_chart((hist/hist.iloc[0]-1)*100)
 else: st.info("Carregando...")
