@@ -5,21 +5,20 @@ import re
 import requests
 import json
 import numpy as np
+import yfinance as yf # Biblioteca nova
 from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
 
 # ==========================================
 # ⚙️ CONFIGURAÇÃO
 # ==========================================
 st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💎")
 
-# Modelo IA
 MODELO_IA = "gemini-2.5-flash-lite"
 
 try:
     URL_FIIS = st.secrets["SHEET_URL_FIIS"]
     URL_MANUAL = st.secrets["SHEET_URL_MANUAL"]
-    
-    # Link da Planilha para o botão
     if "LINK_PLANILHA" in st.secrets:
         URL_EDIT = st.secrets["LINK_PLANILHA"]
     else:
@@ -90,6 +89,34 @@ def to_f(x):
         if pd.isna(x) or str(x).strip() == "": return 0.0
         return float(str(x).replace("R$","").replace("%","").replace(" ", "").replace(".","").replace(",", "."))
     except: return 0.0
+
+# --- NOVO: FUNÇÃO PARA BAIXAR HISTÓRICO (YFINANCE) ---
+@st.cache_data(ttl=3600) # Cache de 1 hora
+def obter_historico(tickers, periodo="6mo"):
+    if not tickers: return pd.DataFrame()
+    
+    # Adiciona .SA para ativos brasileiros se não tiver
+    tickers_sa = [f"{t}.SA" if not t.endswith(".SA") else t for t in tickers]
+    
+    try:
+        # Baixa dados em lote (muito mais rápido)
+        dados = yf.download(tickers_sa, period=periodo, progress=False)['Close']
+        
+        # Se baixou só um ativo, o formato muda, então ajustamos
+        if isinstance(dados, pd.Series):
+            dados = dados.to_frame()
+            dados.columns = tickers_sa
+            
+        # Remove o .SA das colunas para ficar bonito no gráfico
+        dados.columns = [c.replace(".SA", "") for c in dados.columns]
+        
+        # Remove colunas vazias (ativos que falharam)
+        dados.dropna(axis=1, how='all', inplace=True)
+        
+        return dados
+    except Exception as e:
+        st.error(f"Erro ao baixar histórico: {e}")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def carregar_tudo():
@@ -164,50 +191,36 @@ def carregar_tudo():
     
     return df
 
-# --- FUNÇÃO IA ROBUSTA (RETORNA SUCESSO, TEXTO, PROMPT) ---
+# --- FUNÇÃO IA ---
 def analisar_carteira(df):
     try:
-        # Prepara dados resumidos
         df_resumo = df[df["Tipo"]!="Outros"][["Ativo", "Tipo", "Preço Atual", "P/VP", "DY (12m)", "Var %"]].copy()
         csv_data = df_resumo.to_csv(index=False)
         prompt = f"""
-        Você é um consultor financeiro sênior (foco: FIIs e Ações Brasil).
-        Analise a carteira abaixo com rigor técnico e brevidade.
-        
+        Você é um consultor financeiro sênior. Analise com brevidade:
         DADOS:
         {csv_data}
-        Patrimônio Total: R$ {df['Valor Atual'].sum():.2f}
-        Total Investido: R$ {df['Total Investido'].sum():.2f}
+        Patrimônio: R$ {df['Valor Atual'].sum():.2f} | Investido: R$ {df['Total Investido'].sum():.2f}
         
-        ENTREGÁVEL (Use Markdown e Emojis):
-        1. 📊 **Diagnóstico:** Diversificação, Risco e Rentabilidade.
-        2. 💎 **Oportunidades:** FIIs com P/VP < 1.0, DY > 10% e vacância controlada (se souber).
-        3. ⚠️ **Pontos de Atenção:** Ativos com P/VP > 1.10 ou fundamentos ruins.
-        4. 🎯 **Ação:** Onde alocar o próximo aporte?
+        ENTREGÁVEL (Markdown):
+        1. 📊 **Diagnóstico:** Diversificação e Risco.
+        2. 💎 **Oportunidades:** P/VP < 1.0 e DY > 10%.
+        3. ⚠️ **Atenção:** P/VP > 1.10 ou fundamentos ruins.
+        4. 🎯 **Ação:** Onde alocar?
         """
-    except Exception as e:
-        return False, "Erro ao gerar dados", ""
+    except Exception as e: return False, "Erro dados", ""
 
-    if not HAS_AI: 
-        return False, "Chave de API não configurada", prompt
+    if not HAS_AI: return False, "Sem Chave API", prompt
     
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={API_KEY}"
         headers = {'Content-Type': 'application/json'}
         data = {"contents": [{"parts": [{"text": prompt}]}]}
-        
         response = requests.post(url, headers=headers, data=json.dumps(data))
-        
         if response.status_code == 200:
-            texto_ia = response.json()['candidates'][0]['content']['parts'][0]['text']
-            # Retorna: Sucesso=True, Resposta, Prompt (vazio pois não precisa)
-            return True, texto_ia, prompt
-        else:
-            # Retorna: Sucesso=False, Erro, Prompt (para o fallback)
-            return False, "Erro na API", prompt
-            
-    except Exception as e: 
-        return False, str(e), prompt
+            return True, response.json()['candidates'][0]['content']['parts'][0]['text'], prompt
+        else: return False, "Erro API", prompt
+    except Exception as e: return False, str(e), prompt
 
 # --- LAYOUT PRINCIPAL ---
 col_tit, col_btn = st.columns([4, 1])
@@ -217,26 +230,16 @@ with col_btn:
 
 df = carregar_tudo()
 
-# --- SIDEBAR (FERRAMENTAS) ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("Ferramentas")
-    
-    # 1. Botão Planilha
-    if URL_EDIT:
-        st.link_button("📂 Abrir Planilha Fonte", URL_EDIT)
-    else:
-        st.caption("Sem link de planilha configurado.")
-    
+    if URL_EDIT: st.link_button("📂 Abrir Planilha Fonte", URL_EDIT)
+    else: st.caption("Sem link configurado.")
     st.divider()
-    
-    # 2. Botão IA (Só roda se clicar)
     if not df.empty:
         if st.button("🤖 Analisar com IA", type="primary", use_container_width=True):
             with st.spinner(f"Consultando {MODELO_IA}..."):
-                # Chama a função e guarda os 3 retornos
                 sucesso, resultado, prompt_usado = analisar_carteira(df)
-                
-                # Salva no Session State
                 st.session_state['ia_rodou'] = True
                 st.session_state['ia_sucesso'] = sucesso
                 st.session_state['ia_resultado'] = resultado
@@ -250,7 +253,6 @@ if not df.empty:
     val_pct = val_rs / investido if investido > 0 else 0
     renda = df["Renda Mensal"].sum()
     fiis_total = df[df["Tipo"]=="FII"]["Valor Atual"].sum()
-    
     cls_val = "pos" if val_rs >= 0 else "neg"
     sinal = "+" if val_rs >= 0 else ""
 
@@ -285,31 +287,20 @@ if not df.empty:
     </div>
     """, unsafe_allow_html=True)
 
-    # --- RESULTADO DA IA (ABAIXO DOS CARDS) ---
     if st.session_state.get('ia_rodou'):
         st.markdown("### 🤖 Análise Inteligente")
-        
-        if st.session_state['ia_sucesso']:
-            # SUCESSO: Mostra a resposta da IA
-            st.info(st.session_state['ia_resultado'])
+        if st.session_state['ia_sucesso']: st.info(st.session_state['ia_resultado'])
         else:
-            # ERRO: Mostra o Fallback para Manual
-            st.warning("⚠️ IA Indisponível no momento. Faça a análise manual:")
-            
-            c_man1, c_man2 = st.columns([3, 1])
-            with c_man1:
-                st.text_area("Copie este Prompt:", value=st.session_state['ia_prompt'], height=150)
-            with c_man2:
-                st.write("") # Espaçamento
-                st.write("")
-                # Link seguro para abrir o Gemini
+            st.warning("⚠️ IA Indisponível. Use o modo manual:")
+            c1, c2 = st.columns([3, 1])
+            with c1: st.text_area("Prompt:", value=st.session_state['ia_prompt'], height=150)
+            with c2: 
+                st.write(""); st.write("")
                 st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app", use_container_width=True)
-                st.caption("1. Copie o texto.\n2. Abra o Gemini.\n3. Cole e envie.")
-        
         st.divider()
 
-    # --- ABAS DE CONTEÚDO ---
-    tab1, tab2, tab3 = st.tabs(["📊 Visão Geral", "🎯 Radar & Oportunidades", "📋 Inventário"])
+    # --- ABAS ---
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Visão Geral", "🎯 Radar & Oportunidades", "📋 Inventário", "📈 Histórico de Preços"])
 
     with tab1:
         c1, c2 = st.columns(2)
@@ -365,5 +356,40 @@ if not df.empty:
             },
             hide_index=True, use_container_width=True, height=600
         )
+
+    # --- NOVA ABA DE HISTÓRICO ---
+    with tab4:
+        st.subheader("📈 Histórico de Rentabilidade")
+        
+        # Filtra apenas FIIs e Ações (Outros geralmente não têm histórico na bolsa)
+        ativos_bolsa = df[df["Tipo"].isin(["FII", "Ação"])]["Ativo"].tolist()
+        
+        if ativos_bolsa:
+            col_sel, col_per = st.columns([3, 1])
+            with col_sel:
+                # Padrão: Seleciona os 5 maiores ativos para não poluir
+                top_5 = df.sort_values("Valor Atual", ascending=False).head(5)["Ativo"].tolist()
+                ativos_sel = st.multiselect("Selecione os ativos:", ativos_bolsa, default=top_5)
+            with col_per:
+                periodo = st.selectbox("Período:", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=3)
+            
+            if ativos_sel:
+                with st.spinner("Baixando cotações..."):
+                    hist_df = obter_historico(ativos_sel, periodo)
+                
+                if not hist_df.empty:
+                    # Normalização para % (Começa em 0%)
+                    # Divide todos os valores pelo primeiro valor da série e subtrai 1
+                    hist_norm = (hist_df / hist_df.iloc[0] - 1) * 100
+                    
+                    st.line_chart(hist_norm)
+                    st.caption(f"*Gráfico mostra a variação percentual (%) no período selecionado ({periodo}).*")
+                else:
+                    st.warning("Não foi possível obter dados para os ativos selecionados.")
+            else:
+                st.info("Selecione pelo menos um ativo.")
+        else:
+            st.info("Você não possui ativos de bolsa (FIIs ou Ações) cadastrados.")
+
 else:
     st.info("Carregando... Verifique seus links.")
