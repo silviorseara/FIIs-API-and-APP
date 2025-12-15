@@ -171,30 +171,21 @@ def obter_historico(tickers, periodo="6mo"):
         return dados
     except: return pd.DataFrame()
 
-# --- NOVA FUNÇÃO: BUSCAR VÍDEO YOUTUBE ---
-@st.cache_data(ttl=86400) # Cache de 24h para economizar e ser rápido
+# --- BUSCA YOUTUBE ---
+@st.cache_data(ttl=86400)
 def buscar_video(ticker):
     try:
-        # Busca por "Análise FII {ticker}" para pegar conteúdos relevantes
         videosSearch = VideosSearch(f'Análise FII {ticker} vale a pena', limit = 1)
         result = videosSearch.result()
-        
         if result and 'result' in result and len(result['result']) > 0:
             video = result['result'][0]
-            return {
-                'link': video['link'],
-                'title': video['title'],
-                'channel': video['channel']['name'],
-                'views': video.get('viewCount', {}).get('short', '')
-            }
-    except:
-        pass
+            return { 'link': video['link'], 'title': video['title'], 'channel': video['channel']['name'], 'views': video.get('viewCount', {}).get('short', '') }
+    except: pass
     return None
 
 @st.cache_data(ttl=60)
 def carregar_tudo():
     dados = []
-    # 1. FIIs
     try:
         df_fiis = pd.read_csv(URL_FIIS, header=None)
         for index, row in df_fiis.iterrows():
@@ -214,7 +205,6 @@ def carregar_tudo():
             except: continue
     except: pass
 
-    # 2. Manual
     try:
         df_man = pd.read_csv(URL_MANUAL)
         if len(df_man.columns) >= 4:
@@ -245,13 +235,11 @@ def carregar_tudo():
     if df.empty: return df
     df = df.drop_duplicates(subset=["Ativo", "Tipo"], keep="first")
     
-    # Cálculos
     df["Valor Atual"] = df.apply(lambda x: x["Qtd"] * x["Preço Atual"] if x["Tipo"] in ["FII", "Ação"] else x["Preço Atual"], axis=1)
     df["Total Investido"] = df.apply(lambda x: x["Qtd"] * x["Preço Médio"] if x["Tipo"] in ["FII", "Ação"] and x["Preço Médio"] > 0 else x["Valor Atual"], axis=1)
     df["Lucro R$"] = df["Valor Atual"] - df["Total Investido"]
     df["Renda Mensal"] = df.apply(lambda x: (x["Valor Atual"] * x["DY (12m)"] / 12) if x["Tipo"] == "FII" else 0.0, axis=1)
     
-    # Limpeza
     df.replace([np.inf, -np.inf], 0.0, inplace=True)
     cols_num = ["Valor Atual", "Total Investido", "Preço Atual", "VP", "DY (12m)", "Renda Mensal", "Lucro R$", "Preço Médio"]
     for col in cols_num:
@@ -264,7 +252,7 @@ def carregar_tudo():
     
     return df
 
-# --- IA: ANÁLISE GERAL ---
+# --- IA GERAL ---
 def analisar_carteira(df):
     try:
         df_resumo = df[df["Tipo"]!="Outros"][["Ativo", "Tipo", "Preço Atual", "P/VP", "DY (12m)", "Var %"]].copy()
@@ -291,9 +279,8 @@ def analisar_carteira(df):
 # --- MODAL: ANÁLISE ESPECÍFICA + VÍDEO ---
 @st.dialog("🤖 Análise Inteligente", width="large")
 def modal_analise(ativo, tipo_analise, **kwargs):
-    st.empty() # Limpa anterior
+    st.empty()
     
-    # Prompt
     if tipo_analise == "compra":
         prompt = f"""
         Atue como analista. Raio-X do FII **{ativo}**.
@@ -303,7 +290,7 @@ def modal_analise(ativo, tipo_analise, **kwargs):
         3. 💰 Valuation.
         4. ⚖️ Veredito: Compra ou Aguarda?
         """
-    else: # venda
+    else: 
         prompt = f"""
         Analise a VENDA do FII **{ativo}**.
         Dados: PM R$ {kwargs['pm']:.2f} | Preço R$ {kwargs['preco']:.2f} | P/VP {kwargs['pvp']:.2f} | DY {kwargs['dy']:.1%}.
@@ -317,7 +304,6 @@ def modal_analise(ativo, tipo_analise, **kwargs):
         st.error("Sem chave de API configurada.")
         return
 
-    # Executa IA
     with st.spinner(f"Analisando {ativo} em tempo real..."):
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={API_KEY}"
@@ -328,23 +314,17 @@ def modal_analise(ativo, tipo_analise, **kwargs):
             if response.status_code == 200:
                 texto = response.json()['candidates'][0]['content']['parts'][0]['text']
                 st.markdown(texto)
-                
-                # --- BOTÃO COPIAR (NATIVO STREAMLIT) ---
                 st.caption("Copiar análise:")
                 st.code(texto, language=None)
-                
             else:
                 st.error(f"Erro na IA ({response.status_code})")
         except Exception as e:
             st.error(f"Erro de conexão: {e}")
 
     st.divider()
-    
-    # --- ÁREA DE VÍDEO (NOVO!) ---
     st.subheader("📺 Vídeo Relacionado")
     with st.spinner("Buscando vídeo no YouTube..."):
         video_info = buscar_video(ativo)
-        
         if video_info:
             st.video(video_info['link'])
             st.caption(f"**{video_info['title']}** | Canal: {video_info['channel']} | {video_info['views']} visualizações")
@@ -425,6 +405,21 @@ if not df.empty:
     </div>
     """, unsafe_allow_html=True)
 
+    # --- RESULTADO DA IA GERAL ---
+    if st.session_state.get('ia_rodou'):
+        c_head, c_close = st.columns([9, 1])
+        with c_head: st.markdown("### ✨ Insights da Carteira")
+        with c_close:
+            if st.button("✕", help="Fechar"):
+                st.session_state['ia_rodou'] = False
+                st.rerun()
+        if st.session_state['ia_sucesso']: st.info(st.session_state['ia_resultado'])
+        else:
+            st.warning("IA Indisponível. Copie o prompt:")
+            st.text_area("Prompt:", value=st.session_state['ia_prompt'], height=150)
+            st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app")
+        st.divider()
+
     # --- DESTAQUE: OPORTUNIDADES ---
     media_peso = df["% Carteira"].mean()
     df_opp = df[
@@ -444,6 +439,7 @@ if not df.empty:
             valor_meta = patrimonio * media_peso
             falta_investir = valor_meta - row["Valor Atual"]
             if falta_investir < 0: falta_investir = 0
+            
             cards_data.append({
                 "Ativo": row["Ativo"], "PVP": row["P/VP"], "DY": row["DY (12m)"],
                 "Preco": row["Preço Atual"], "Peso": row["% Carteira"], 
@@ -476,7 +472,7 @@ if not df.empty:
                     modal_analise(card['Ativo'], "compra", preco=card['Preco'], pvp=card['PVP'], dy=card['DY'])
         st.divider()
 
-    # --- ALERTAS DE SAÍDA ---
+    # --- ALERTAS DE SAÍDA (CORRIGIDO) ---
     media_dy = df["DY (12m)"].mean()
     df_alert = df[(df["Tipo"] == "FII") & (
         (df["P/VP"] > 1.10) | 
@@ -491,7 +487,7 @@ if not df.empty:
         alerts_data = []
         for index, row in df_alert.iterrows():
             mots = []
-            if row["P/VP"] > 1.10: mots.append("Caro")
+            if row["P/VP"] > 1.10: mots.append("Caro (>1.10)")
             if row["DY (12m)"] < (media_dy * 0.85): mots.append("Baixo Yield")
             if row["P/VP"] < 0.70 and row["DY (12m)"] < 0.08: mots.append("Fundamentos?")
             motivo_txt = " + ".join(mots)
@@ -529,21 +525,6 @@ if not df.empty:
                     modal_analise(card['Ativo'], "venda", preco=card['Preco'], pm=card['PM'], pvp=card['PVP'], dy=card['DY'], motivo=card['Motivo'])
         st.divider()
 
-    # --- RESULTADO DA IA GERAL ---
-    if st.session_state.get('ia_rodou'):
-        c_head, c_close = st.columns([9, 1])
-        with c_head: st.markdown("### ✨ Insights da Carteira")
-        with c_close:
-            if st.button("✕", help="Fechar"):
-                st.session_state['ia_rodou'] = False
-                st.rerun()
-        if st.session_state['ia_sucesso']: st.info(st.session_state['ia_resultado'])
-        else:
-            st.warning("IA Indisponível. Copie o prompt:")
-            st.text_area("Prompt:", value=st.session_state['ia_prompt'], height=150)
-            st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app")
-        st.divider()
-
     # --- ABAS ---
     tab1, tab2, tab3, tab4 = st.tabs(["📊 Visão", "🎯 Matriz & Radar", "📋 Lista", "📈 Histórico"])
 
@@ -575,7 +556,9 @@ if not df.empty:
                 df_radar.sort_values("P/VP")[["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"]].style.format({
                     "Preço Atual": real_br, "Valor Atual": real_br, "P/VP": "{:.2f}",
                     "DY (12m)": pct_br, "% Carteira": pct_br
-                }).background_gradient(subset=["P/VP"], cmap="RdYlGn_r"),
+                })
+                .background_gradient(subset=["P/VP"], cmap="RdYlGn_r")
+                .background_gradient(subset=["DY (12m)"], cmap="Greens"), # ADICIONEI O HEATMAP AQUI
                 use_container_width=True
             )
 
