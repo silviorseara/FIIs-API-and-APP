@@ -22,7 +22,7 @@ except KeyError as e:
     print(f"Erro: Variável {e} não configurada.")
     sys.exit(1)
 
-# Modelo padrão 
+# Modelo padrão (mais estável que o lite)
 MODELO_IA = "gemini-2.5-flash-lite"
 
 # --- FUNÇÕES ---
