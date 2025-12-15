@@ -10,3 +10,4 @@ matplotlib
 tabulate
 numpy
 yfinance
+youtube-search-python

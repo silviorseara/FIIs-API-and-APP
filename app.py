@@ -8,6 +8,8 @@ import numpy as np
 import yfinance as yf
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
+# Importação da busca no YouTube
+from youtubesearchpython import VideosSearch
 
 # ==========================================
 # ⚙️ CONFIGURAÇÃO
@@ -46,7 +48,6 @@ st.markdown("""
         gap: 15px;
         margin-bottom: 30px;
     }
-    
     .kpi-card {
         background-color: var(--background-secondary-color);
         border: 1px solid rgba(128, 128, 128, 0.1); 
@@ -73,7 +74,7 @@ st.markdown("""
         display: flex; flex-direction: column; justify-content: space-between;
     }
     
-    /* CARD ALERTA (REDESIGN) */
+    /* CARD ALERTA */
     .alert-card {
         background: linear-gradient(135deg, rgba(255, 87, 34, 0.05) 0%, rgba(255, 152, 0, 0.1) 100%);
         border: 1px solid rgba(255, 87, 34, 0.3);
@@ -100,14 +101,13 @@ st.markdown("""
     .card-label { font-size: 0.65rem; color: #666; text-transform: uppercase; margin-bottom: 2px; }
     .card-val { font-weight: 700; color: #333; font-size: 0.9rem; }
     
-    /* Footer Informativo (Não parece botão) */
     .opp-footer {
         margin-top: 12px; background-color: #ccfbf1; color: #0f766e;
-        padding: 6px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; margin-bottom: 8px;
+        padding: 8px; border-radius: 8px; font-size: 0.85rem; font-weight: 700; margin-bottom: 8px;
     }
     .alert-footer {
         margin-top: 12px; background-color: #ffccbc; color: #bf360c;
-        padding: 6px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; margin-bottom: 8px;
+        padding: 8px; border-radius: 8px; font-size: 0.85rem; font-weight: 700; margin-bottom: 8px;
     }
     
     .link-btn {
@@ -171,6 +171,26 @@ def obter_historico(tickers, periodo="6mo"):
         return dados
     except: return pd.DataFrame()
 
+# --- NOVA FUNÇÃO: BUSCAR VÍDEO YOUTUBE ---
+@st.cache_data(ttl=86400) # Cache de 24h para economizar e ser rápido
+def buscar_video(ticker):
+    try:
+        # Busca por "Análise FII {ticker}" para pegar conteúdos relevantes
+        videosSearch = VideosSearch(f'Análise FII {ticker} vale a pena', limit = 1)
+        result = videosSearch.result()
+        
+        if result and 'result' in result and len(result['result']) > 0:
+            video = result['result'][0]
+            return {
+                'link': video['link'],
+                'title': video['title'],
+                'channel': video['channel']['name'],
+                'views': video.get('viewCount', {}).get('short', '')
+            }
+    except:
+        pass
+    return None
+
 @st.cache_data(ttl=60)
 def carregar_tudo():
     dados = []
@@ -231,6 +251,7 @@ def carregar_tudo():
     df["Lucro R$"] = df["Valor Atual"] - df["Total Investido"]
     df["Renda Mensal"] = df.apply(lambda x: (x["Valor Atual"] * x["DY (12m)"] / 12) if x["Tipo"] == "FII" else 0.0, axis=1)
     
+    # Limpeza
     df.replace([np.inf, -np.inf], 0.0, inplace=True)
     cols_num = ["Valor Atual", "Total Investido", "Preço Atual", "VP", "DY (12m)", "Renda Mensal", "Lucro R$", "Preço Médio"]
     for col in cols_num:
@@ -267,13 +288,12 @@ def analisar_carteira(df):
         else: return False, "Erro API", prompt
     except Exception as e: return False, str(e), prompt
 
-# --- MODAL: ANÁLISE ESPECÍFICA (CORRIGIDO) ---
+# --- MODAL: ANÁLISE ESPECÍFICA + VÍDEO ---
 @st.dialog("🤖 Análise Inteligente", width="large")
 def modal_analise(ativo, tipo_analise, **kwargs):
-    # Limpa estado anterior para evitar efeito "cinza"
-    st.empty()
+    st.empty() # Limpa anterior
     
-    # Monta o prompt
+    # Prompt
     if tipo_analise == "compra":
         prompt = f"""
         Atue como analista. Raio-X do FII **{ativo}**.
@@ -297,7 +317,7 @@ def modal_analise(ativo, tipo_analise, **kwargs):
         st.error("Sem chave de API configurada.")
         return
 
-    # Executa a IA na hora (Fresh)
+    # Executa IA
     with st.spinner(f"Analisando {ativo} em tempo real..."):
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={API_KEY}"
@@ -307,20 +327,30 @@ def modal_analise(ativo, tipo_analise, **kwargs):
             
             if response.status_code == 200:
                 texto = response.json()['candidates'][0]['content']['parts'][0]['text']
-                st.success("Análise Concluída!")
-                
-                # Exibe o texto com Markdown
                 st.markdown(texto)
                 
-                st.divider()
-                st.caption("Copie a análise abaixo se desejar:")
-                # st.code fornece o botão de copiar nativo
+                # --- BOTÃO COPIAR (NATIVO STREAMLIT) ---
+                st.caption("Copiar análise:")
                 st.code(texto, language=None)
                 
             else:
                 st.error(f"Erro na IA ({response.status_code})")
         except Exception as e:
             st.error(f"Erro de conexão: {e}")
+
+    st.divider()
+    
+    # --- ÁREA DE VÍDEO (NOVO!) ---
+    st.subheader("📺 Vídeo Relacionado")
+    with st.spinner("Buscando vídeo no YouTube..."):
+        video_info = buscar_video(ativo)
+        
+        if video_info:
+            st.video(video_info['link'])
+            st.caption(f"**{video_info['title']}** | Canal: {video_info['channel']} | {video_info['views']} visualizações")
+        else:
+            st.info("Nenhum vídeo recente encontrado.")
+            st.link_button("Buscar no YouTube", f"https://www.youtube.com/results?search_query=analise+{ativo}")
 
 # --- HELPER PRIVACIDADE ---
 def fmt(valor, prefix="R$ ", is_pct=False):
@@ -409,18 +439,15 @@ if not df.empty:
         st.subheader("🎯 Oportunidades de Aporte")
         cols = st.columns(len(df_opp))
         
-        # PREPARAÇÃO DOS DADOS DO CARD
         cards_data = []
         for index, row in df_opp.iterrows():
             valor_meta = patrimonio * media_peso
             falta_investir = valor_meta - row["Valor Atual"]
             if falta_investir < 0: falta_investir = 0
-            
             cards_data.append({
                 "Ativo": row["Ativo"], "PVP": row["P/VP"], "DY": row["DY (12m)"],
                 "Preco": row["Preço Atual"], "Peso": row["% Carteira"], 
-                "ValorTenho": row["Valor Atual"],
-                "Falta": falta_investir, "Link": row["Link"]
+                "ValorTenho": row["Valor Atual"], "Falta": falta_investir, "Link": row["Link"]
             })
 
         for idx, card in enumerate(cards_data):
@@ -441,11 +468,10 @@ if not df.empty:
                         Meta Média: {pct_br(media_peso)} <br>
                         Aporte Sugerido: {real_br(card['Falta'])}
                     </div>
-                    <a href="{card['Link']}" target="_blank" class="link-btn">🌐 Ver no Investidor10</a>
+                    <a href="{card['Link']}" target="_blank" class="link-btn">🌐 Ver Detalhes</a>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Botão IA (Chama o modal)
                 if st.button(f"✨ Raio-X IA", key=f"btn_opp_{card['Ativo']}", use_container_width=True):
                     modal_analise(card['Ativo'], "compra", preco=card['Preco'], pvp=card['PVP'], dy=card['DY'])
         st.divider()
@@ -465,20 +491,16 @@ if not df.empty:
         alerts_data = []
         for index, row in df_alert.iterrows():
             mots = []
-            if row["P/VP"] > 1.10: mots.append("Caro (>1.10)")
+            if row["P/VP"] > 1.10: mots.append("Caro")
             if row["DY (12m)"] < (media_dy * 0.85): mots.append("Baixo Yield")
             if row["P/VP"] < 0.70 and row["DY (12m)"] < 0.08: mots.append("Fundamentos?")
             motivo_txt = " + ".join(mots)
             
-            # Cálculo de desvio da média
-            diff_media = row["% Carteira"] - media_peso 
-            txt_diff = f"{diff_media:+.1%} vs Média"
-
             alerts_data.append({
                 "Ativo": row["Ativo"], "PVP": row["P/VP"], "DY": row["DY (12m)"],
                 "Preco": row["Preço Atual"], "PM": row["Preço Médio"], 
                 "Peso": row["% Carteira"], "Valor": row["Valor Atual"],
-                "Link": row["Link"], "Motivo": motivo_txt, "Diff": txt_diff
+                "Link": row["Link"], "Motivo": motivo_txt
             })
 
         for idx, card in enumerate(alerts_data):
@@ -515,13 +537,10 @@ if not df.empty:
             if st.button("✕", help="Fechar"):
                 st.session_state['ia_rodou'] = False
                 st.rerun()
-        if st.session_state['ia_sucesso']: 
-            st.info(st.session_state['ia_resultado'])
-            with st.expander("Ver Prompt"):
-                st.code(st.session_state['ia_prompt'], language=None)
+        if st.session_state['ia_sucesso']: st.info(st.session_state['ia_resultado'])
         else:
             st.warning("IA Indisponível. Copie o prompt:")
-            st.code(st.session_state['ia_prompt'], language=None)
+            st.text_area("Prompt:", value=st.session_state['ia_prompt'], height=150)
             st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app")
         st.divider()
 
