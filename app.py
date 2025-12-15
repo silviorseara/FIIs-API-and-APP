@@ -5,7 +5,7 @@ import re
 import requests
 import json
 import numpy as np
-import yfinance as yf # Biblioteca nova
+import yfinance as yf
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 
@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 # ==========================================
 st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💎")
 
+# Modelo IA
 MODELO_IA = "gemini-2.5-flash-lite"
 
 try:
@@ -90,33 +91,18 @@ def to_f(x):
         return float(str(x).replace("R$","").replace("%","").replace(" ", "").replace(".","").replace(",", "."))
     except: return 0.0
 
-# --- NOVO: FUNÇÃO PARA BAIXAR HISTÓRICO (YFINANCE) ---
-@st.cache_data(ttl=3600) # Cache de 1 hora
+@st.cache_data(ttl=3600)
 def obter_historico(tickers, periodo="6mo"):
     if not tickers: return pd.DataFrame()
-    
-    # Adiciona .SA para ativos brasileiros se não tiver
     tickers_sa = [f"{t}.SA" if not t.endswith(".SA") else t for t in tickers]
-    
     try:
-        # Baixa dados em lote (muito mais rápido)
         dados = yf.download(tickers_sa, period=periodo, progress=False)['Close']
-        
-        # Se baixou só um ativo, o formato muda, então ajustamos
         if isinstance(dados, pd.Series):
-            dados = dados.to_frame()
-            dados.columns = tickers_sa
-            
-        # Remove o .SA das colunas para ficar bonito no gráfico
+            dados = dados.to_frame(); dados.columns = tickers_sa
         dados.columns = [c.replace(".SA", "") for c in dados.columns]
-        
-        # Remove colunas vazias (ativos que falharam)
         dados.dropna(axis=1, how='all', inplace=True)
-        
         return dados
-    except Exception as e:
-        st.error(f"Erro ao baixar histórico: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def carregar_tudo():
@@ -197,16 +183,18 @@ def analisar_carteira(df):
         df_resumo = df[df["Tipo"]!="Outros"][["Ativo", "Tipo", "Preço Atual", "P/VP", "DY (12m)", "Var %"]].copy()
         csv_data = df_resumo.to_csv(index=False)
         prompt = f"""
-        Você é um consultor financeiro sênior. Analise com brevidade:
+        Você é um consultor financeiro sênior (foco: FIIs e Ações Brasil).
+        Analise a carteira abaixo com rigor técnico e brevidade.
         DADOS:
         {csv_data}
-        Patrimônio: R$ {df['Valor Atual'].sum():.2f} | Investido: R$ {df['Total Investido'].sum():.2f}
+        Patrimônio Total: R$ {df['Valor Atual'].sum():.2f}
+        Total Investido: R$ {df['Total Investido'].sum():.2f}
         
-        ENTREGÁVEL (Markdown):
-        1. 📊 **Diagnóstico:** Diversificação e Risco.
-        2. 💎 **Oportunidades:** P/VP < 1.0 e DY > 10%.
-        3. ⚠️ **Atenção:** P/VP > 1.10 ou fundamentos ruins.
-        4. 🎯 **Ação:** Onde alocar?
+        ENTREGÁVEL (Use Markdown e Emojis):
+        1. 📊 **Diagnóstico:** Diversificação, Risco e Rentabilidade.
+        2. 💎 **Oportunidades:** FIIs com P/VP < 1.0, DY > 10% e vacância controlada (se souber).
+        3. ⚠️ **Pontos de Atenção:** Ativos com P/VP > 1.10 ou fundamentos ruins.
+        4. 🎯 **Ação:** Onde alocar o próximo aporte?
         """
     except Exception as e: return False, "Erro dados", ""
 
@@ -246,7 +234,6 @@ with st.sidebar:
                 st.session_state['ia_prompt'] = prompt_usado
 
 if not df.empty:
-    # --- DADOS ---
     patrimonio = df["Valor Atual"].sum()
     investido = df["Total Investido"].sum()
     val_rs = patrimonio - investido
@@ -256,7 +243,6 @@ if not df.empty:
     cls_val = "pos" if val_rs >= 0 else "neg"
     sinal = "+" if val_rs >= 0 else ""
 
-    # --- 5 CARDS ---
     st.markdown(f"""
     <div class="kpi-grid">
         <div class="kpi-card">
@@ -299,8 +285,7 @@ if not df.empty:
                 st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app", use_container_width=True)
         st.divider()
 
-    # --- ABAS ---
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Visão Geral", "🎯 Radar & Oportunidades", "📋 Inventário", "📈 Histórico de Preços"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Visão Geral", "🎯 Radar & Oportunidades", "📋 Inventário", "📈 Histórico"])
 
     with tab1:
         c1, c2 = st.columns(2)
@@ -337,37 +322,50 @@ if not df.empty:
                 use_container_width=True
             )
 
+    # --- TAB 3 COM ESTILIZAÇÃO E CORREÇÃO DE FLAGS ---
     with tab3:
         st.subheader("Inventário Completo")
         tipos = st.multiselect("Filtrar:", df["Tipo"].unique(), default=df["Tipo"].unique())
-        df_view = df[df["Tipo"].isin(tipos)]
+        df_view = df[df["Tipo"].isin(tipos)].copy()
+        
+        # Seleciona Colunas para Exibir
+        cols_show = ["Link", "Ativo", "Tipo", "Preço Médio", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"]
+        # Garante que existem
+        df_view = df_view[[c for c in cols_show if c in df_view.columns]]
+
         st.dataframe(
-            df_view,
-            column_order=("Link", "Ativo", "Tipo", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"),
+            df_view.style
+            .format({
+                "Preço Médio": "R$ {:.2f}",
+                "Preço Atual": "R$ {:.2f}",
+                "Valor Atual": "R$ {:.2f}",
+                "Renda Mensal": "R$ {:.2f}",
+                "Qtd": "{:.0f}",
+                "Var %": "{:.2%}",
+                "DY (12m)": "{:.2%}",
+                "% Carteira": "{:.2%}"
+            })
+            # Gradiente: Vermelho (Negativo) -> Amarelo -> Verde (Positivo)
+            .background_gradient(subset=["Var %"], cmap="RdYlGn", vmin=-0.5, vmax=0.5)
+            # Gradiente: Branco -> Verde
+            .background_gradient(subset=["DY (12m)"], cmap="Greens"),
+            
+            column_order=cols_show,
             column_config={
                 "Link": st.column_config.LinkColumn("", display_text="🌐", width="small"),
-                "Preço Atual": st.column_config.NumberColumn(format="R$ %.2f"),
-                "Valor Atual": st.column_config.NumberColumn(format="R$ %.2f"),
-                "Qtd": st.column_config.NumberColumn(format="%.0f"),
-                "Var %": st.column_config.NumberColumn("Rentab.", format="%.2%"),
-                "DY (12m)": st.column_config.NumberColumn(format="%.2%"),
                 "% Carteira": st.column_config.ProgressColumn("Peso", format="%.2%", min_value=0, max_value=1),
-                "Renda Mensal": st.column_config.NumberColumn("Renda Est.", format="R$ %.2f"),
             },
-            hide_index=True, use_container_width=True, height=600
+            hide_index=True,
+            use_container_width=True,
+            height=600
         )
 
-    # --- NOVA ABA DE HISTÓRICO ---
     with tab4:
         st.subheader("📈 Histórico de Rentabilidade")
-        
-        # Filtra apenas FIIs e Ações (Outros geralmente não têm histórico na bolsa)
         ativos_bolsa = df[df["Tipo"].isin(["FII", "Ação"])]["Ativo"].tolist()
-        
         if ativos_bolsa:
             col_sel, col_per = st.columns([3, 1])
             with col_sel:
-                # Padrão: Seleciona os 5 maiores ativos para não poluir
                 top_5 = df.sort_values("Valor Atual", ascending=False).head(5)["Ativo"].tolist()
                 ativos_sel = st.multiselect("Selecione os ativos:", ativos_bolsa, default=top_5)
             with col_per:
@@ -376,20 +374,12 @@ if not df.empty:
             if ativos_sel:
                 with st.spinner("Baixando cotações..."):
                     hist_df = obter_historico(ativos_sel, periodo)
-                
                 if not hist_df.empty:
-                    # Normalização para % (Começa em 0%)
-                    # Divide todos os valores pelo primeiro valor da série e subtrai 1
                     hist_norm = (hist_df / hist_df.iloc[0] - 1) * 100
-                    
                     st.line_chart(hist_norm)
                     st.caption(f"*Gráfico mostra a variação percentual (%) no período selecionado ({periodo}).*")
-                else:
-                    st.warning("Não foi possível obter dados para os ativos selecionados.")
-            else:
-                st.info("Selecione pelo menos um ativo.")
-        else:
-            st.info("Você não possui ativos de bolsa (FIIs ou Ações) cadastrados.")
+                else: st.warning("Sem dados históricos.")
+        else: st.info("Sem ativos de bolsa.")
 
 else:
     st.info("Carregando... Verifique seus links.")
