@@ -12,8 +12,7 @@ from datetime import datetime, timedelta
 # ==========================================
 # ⚙️ CONFIGURAÇÃO
 # ==========================================
-# Ícone da página agora é um gráfico minimalista
-st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💠")
+st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💎")
 
 # Modelo IA
 MODELO_IA = "gemini-2.5-flash-lite"
@@ -39,84 +38,52 @@ except:
 # Colunas
 COL_TICKER = 0; COL_QTD = 5; COL_PRECO = 8; COL_PM = 9; COL_VP = 11; COL_DY = 17
 
-# --- CSS MODERN (MATERIAL / GLASS) ---
+# --- CSS ---
 st.markdown("""
 <style>
-    /* Grid */
+    /* Grid Principal */
     .kpi-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 20px;
-        margin-bottom: 40px;
+        gap: 15px;
+        margin-bottom: 30px;
     }
     
-    /* CARD ESTILO "GLASS/MATERIAL" */
+    /* Card Padrão */
     .kpi-card {
         background-color: var(--background-secondary-color);
-        /* Borda sutil translúcida */
-        border: 1px solid rgba(128, 128, 128, 0.1); 
-        border-radius: 16px; /* Arredondamento maior (Moderno) */
-        padding: 24px 16px;
+        border: 1px solid var(--text-color-20);
+        border-radius: 16px;
+        padding: 20px 10px;
         text-align: center;
-        /* Sombra difusa e suave (Material Design 3) */
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.04);
         display: flex;
         flex-direction: column;
         justify-content: center;
         align-items: center;
         height: 100%;
-        transition: transform 0.2s ease-in-out;
+        transition: transform 0.2s;
+    }
+    .kpi-card:hover { transform: translateY(-2px); }
+
+    /* Card de Oportunidade (Destaque) */
+    .opp-card {
+        background: linear-gradient(135deg, rgba(6, 95, 70, 0.05) 0%, rgba(16, 185, 129, 0.1) 100%);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        border-radius: 12px;
+        padding: 15px;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
     }
     
-    /* Efeito Hover sutil */
-    .kpi-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 10px 10px -5px rgba(0, 0, 0, 0.02);
-    }
-
-    .kpi-label {
-        font-family: 'Segoe UI', sans-serif;
-        font-size: 0.75rem;
-        opacity: 0.6;
-        margin-bottom: 8px;
-        text-transform: uppercase;
-        letter-spacing: 1px; /* Espaçamento elegante */
-        font-weight: 600;
-    }
-
-    .kpi-value {
-        font-family: 'Segoe UI', sans-serif;
-        font-size: 1.7rem;
-        font-weight: 700;
-        color: var(--text-color); /* Usa a cor do tema (Preto ou Branco) */
-        margin-bottom: 8px;
-    }
-
-    .kpi-delta {
-        font-size: 0.75rem;
-        font-weight: 600;
-        padding: 4px 12px;
-        border-radius: 20px;
-        display: inline-block;
-    }
+    .kpi-label { font-size: 0.75rem; opacity: 0.7; margin-bottom: 5px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;}
+    .kpi-value { font-size: 1.5rem; font-weight: 800; color: #1f77b4; margin-bottom: 5px; }
     
-    /* Cores Pastel (Mais modernas que o neon anterior) */
-    .pos { color: #065f46; background-color: #d1fae5; border: 1px solid #a7f3d0; } /* Verde suave */
-    .neg { color: #991b1b; background-color: #fee2e2; border: 1px solid #fecaca; } /* Vermelho suave */
-    .neu { color: #374151; background-color: #f3f4f6; border: 1px solid #e5e7eb; } /* Cinza suave */
-    
-    /* Botões */
-    .stButton button {
-        width: 100%;
-        border-radius: 10px;
-        font-weight: 600;
-        border: none;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        transition: all 0.2s;
-    }
-    .stButton button:hover {
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
+    .opp-ticker { font-size: 1.4rem; font-weight: 900; color: #065f46; margin-bottom: 5px; }
+    .opp-stats { font-size: 0.85rem; color: #374151; font-weight: 500; display: flex; justify-content: space-around; width: 100%; margin-top: 5px; }
+    .opp-badge { background-color: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: bold; margin-bottom: 8px;}
+
+    .stButton button { width: 100%; border-radius: 8px; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -215,7 +182,7 @@ def carregar_tudo():
     
     # Limpeza
     df.replace([np.inf, -np.inf], 0.0, inplace=True)
-    cols_num = ["Valor Atual", "Total Investido", "Preço Atual", "VP", "DY (12m)", "Renda Mensal", "Lucro R$", "Preço Médio"]
+    cols_num = ["Valor Atual", "Total Investido", "Preço Atual", "VP", "DY (12m)", "Renda Mensal", "Lucro R$"]
     for col in cols_num:
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
@@ -234,7 +201,6 @@ def analisar_carteira(df):
         prompt = f"""
         Você é um consultor financeiro sênior (foco: FIIs e Ações Brasil).
         Analise a carteira abaixo com rigor técnico e brevidade.
-        
         DADOS:
         {csv_data}
         Patrimônio Total: R$ {df['Valor Atual'].sum():.2f}
@@ -242,7 +208,7 @@ def analisar_carteira(df):
         
         ENTREGÁVEL (Use Markdown e Emojis):
         1. 📊 **Diagnóstico:** Diversificação, Risco e Rentabilidade.
-        2. 💎 **Oportunidades:** FIIs com P/VP < 1.0, DY > 10% e vacância controlada (se souber).
+        2. 💎 **Oportunidades:** FIIs com P/VP < 1.0, DY > 10% e vacância controlada.
         3. ⚠️ **Pontos de Atenção:** Ativos com P/VP > 1.10 ou fundamentos ruins.
         4. 🎯 **Ação:** Onde alocar o próximo aporte?
         """
@@ -268,9 +234,7 @@ def fmt(valor, prefix="R$ ", is_pct=False):
 
 # --- LAYOUT PRINCIPAL ---
 c_top1, c_top2 = st.columns([6, 1])
-with c_top1: 
-    # Título com ícone moderno
-    st.markdown("## 💠 Carteira Pro")
+with c_top1: st.markdown("## 💠 Carteira Pro")
 with c_top2: 
     if st.button("↻ Atualizar"): st.cache_data.clear(); st.rerun()
 
@@ -279,25 +243,14 @@ df = carregar_tudo()
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("Ferramentas")
-    
-    if URL_EDIT:
-        # Ícone de Link limpo 🔗
-        st.link_button("🔗 Planilha Fonte", URL_EDIT)
+    if URL_EDIT: st.link_button("🔗 Planilha Fonte", URL_EDIT)
     else: st.caption("Sem link.")
-    
     st.divider()
-    
-    # Toggle de Privacidade (Guardando no Session State)
     if 'privacy_mode' not in st.session_state: st.session_state['privacy_mode'] = False
-    
-    # Ícone de Cadeado 🔒
     p_label = "🔒 Privacidade Ativa" if st.session_state['privacy_mode'] else "🔓 Privacidade Inativa"
     st.session_state['privacy_mode'] = st.toggle(p_label, value=st.session_state['privacy_mode'])
-    
     st.divider()
-    
     if not df.empty:
-        # Ícone de Brilho ✨ para IA (Padrão moderno)
         if st.button("✨ Analisar com IA", type="primary", use_container_width=True):
             with st.spinner(f"Consultando {MODELO_IA}..."):
                 sucesso, resultado, prompt_usado = analisar_carteira(df)
@@ -313,11 +266,10 @@ if not df.empty:
     val_pct = val_rs / investido if investido > 0 else 0
     renda = df["Renda Mensal"].sum()
     fiis_total = df[df["Tipo"]=="FII"]["Valor Atual"].sum()
-    
     cls_val = "pos" if val_rs >= 0 else "neg"
     sinal = "+" if val_rs >= 0 else ""
 
-    # --- CARDS MODERNOS ---
+    # --- 5 CARDS PRINCIPAIS ---
     st.markdown(f"""
     <div class="kpi-grid">
         <div class="kpi-card">
@@ -348,18 +300,49 @@ if not df.empty:
     </div>
     """, unsafe_allow_html=True)
 
+    # --- DESTAQUE: OPORTUNIDADES (NOVO BLOCO) ---
+    # Critérios: FII, 0.8 <= P/VP <= 0.9, DY > 10%, Peso < Média
+    media_peso = df["% Carteira"].mean()
+    
+    df_opp = df[
+        (df["Tipo"] == "FII") & 
+        (df["P/VP"] >= 0.80) & 
+        (df["P/VP"] <= 0.90) & 
+        (df["DY (12m)"] > 0.10) & 
+        (df["% Carteira"] < media_peso)
+    ].sort_values("P/VP", ascending=True).head(4) # Top 4
+
+    if not df_opp.empty and not st.session_state.get('privacy_mode'):
+        st.subheader("🎯 Oportunidades de Aporte")
+        cols = st.columns(len(df_opp))
+        for idx, row in enumerate(df_opp.itertuples()):
+            with cols[idx]:
+                st.markdown(f"""
+                <div class="opp-card">
+                    <div class="opp-badge">💎 Oportunidade</div>
+                    <div class="opp-ticker">{row.Ativo}</div>
+                    <div class="opp-stats">
+                        <span>P/VP: <b>{row._7:.2f}</b></span>
+                        <span>DY: <b>{row._8:.1%}</b></span>
+                    </div>
+                    <div style="font-size: 0.8rem; margin-top: 5px; color: #666;">
+                        Preço: R$ {row._5:.2f}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        st.write("") # Espaço
+        st.divider()
+
     # --- RESULTADO DA IA ---
     if st.session_state.get('ia_rodou'):
         c_head, c_close = st.columns([9, 1])
         with c_head: st.markdown("### ✨ Insights da IA")
         with c_close:
-            # Botão "X" minimalista
             if st.button("✕", help="Fechar"):
                 st.session_state['ia_rodou'] = False
                 st.rerun()
         
-        if st.session_state['ia_sucesso']:
-            st.info(st.session_state['ia_resultado'])
+        if st.session_state['ia_sucesso']: st.info(st.session_state['ia_resultado'])
         else:
             st.warning("IA Indisponível. Copie o prompt:")
             c1, c2 = st.columns([3, 1])
@@ -370,7 +353,7 @@ if not df.empty:
         st.divider()
 
     # --- ABAS ---
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Visão", "🎯 Oportunidades", "📋 Lista", "📈 Histórico"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Visão", "🎯 Matriz & Radar", "📋 Inventário", "📈 Histórico"])
 
     with tab1:
         c1, c2 = st.columns(2)
@@ -393,7 +376,7 @@ if not df.empty:
             fig.add_vline(x=1.0, line_dash="dot", line_color="gray")
             st.plotly_chart(fig, use_container_width=True)
         st.divider()
-        st.subheader("🔥 Melhores Descontos")
+        st.subheader("🔥 Top Melhores Métricas")
         df_radar = df[(df["Tipo"] == "FII") & (df["P/VP"] < 1.0) & (df["P/VP"] > 0.1)].copy()
         if not df_radar.empty:
             st.dataframe(
@@ -405,7 +388,7 @@ if not df.empty:
             )
 
     with tab3:
-        st.subheader("Lista Completa")
+        st.subheader("Inventário Completo")
         tipos = st.multiselect("Filtrar:", df["Tipo"].unique(), default=df["Tipo"].unique())
         df_view = df[df["Tipo"].isin(tipos)].copy()
         cols_show = ["Link", "Ativo", "Tipo", "Preço Médio", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"]
