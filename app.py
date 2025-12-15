@@ -74,6 +74,7 @@ st.markdown("""
         display: flex;
         flex-direction: column;
         justify-content: space-between;
+        position: relative;
     }
     .opp-header {
         display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
@@ -92,7 +93,17 @@ st.markdown("""
     .opp-footer {
         margin-top: 12px; background-color: #ccfbf1; color: #0f766e;
         padding: 8px; border-radius: 8px; font-size: 0.85rem; font-weight: 700;
+        margin-bottom: 8px;
     }
+    
+    /* Botão Link Externo (Estilo CSS puro) */
+    .opp-link-btn {
+        display: block; width: 100%; text-decoration: none;
+        background-color: #fff; color: #0f766e; border: 1px solid #0f766e;
+        padding: 6px 0; border-radius: 8px; font-size: 0.8rem; font-weight: 600;
+        transition: all 0.2s; cursor: pointer;
+    }
+    .opp-link-btn:hover { background-color: #0f766e; color: #fff; }
 
     .kpi-label { font-size: 0.75rem; opacity: 0.7; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
     .kpi-value { font-size: 1.7rem; font-weight: 700; color: var(--text-color); margin-bottom: 8px; }
@@ -123,19 +134,15 @@ def get_stock_price(ticker):
 def to_f(x): 
     try:
         if pd.isna(x) or str(x).strip() == "": return 0.0
-        # Limpa tudo para o Python calcular (Formato US interno)
         return float(str(x).replace("R$","").replace("%","").replace(" ", "").replace(".","").replace(",", "."))
     except: return 0.0
 
-# --- FORMATAÇÃO BRASILEIRA (NOVO) ---
+# --- FORMATAÇÃO BRASILEIRA ---
 def real_br(valor):
-    """Converte float para String R$ 1.000,00"""
     if not isinstance(valor, (int, float)): return valor
-    # Formata como US e depois inverte pontuação
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def pct_br(valor):
-    """Converte 0.10 para 10,00%"""
     if not isinstance(valor, (int, float)): return valor
     return f"{valor:.2%}".replace(".", ",")
 
@@ -225,31 +232,21 @@ def carregar_tudo():
     
     return df
 
-# --- FUNÇÃO IA ---
+# --- IA: ANÁLISE GERAL ---
 def analisar_carteira(df):
     try:
         df_resumo = df[df["Tipo"]!="Outros"][["Ativo", "Tipo", "Preço Atual", "P/VP", "DY (12m)", "Var %"]].copy()
         csv_data = df_resumo.to_csv(index=False)
         prompt = f"""
-        Você é um consultor financeiro sênior (foco: FIIs e Ações Brasil).
-        Analise a carteira abaixo com rigor técnico e brevidade.
-        
-        DADOS:
+        Você é um consultor financeiro. Analise a carteira:
         {csv_data}
-        Patrimônio Total: R$ {df['Valor Atual'].sum():.2f}
-        Total Investido: R$ {df['Total Investido'].sum():.2f}
-        
-        ENTREGÁVEL (Use Markdown e Emojis):
-        1. 📊 **Diagnóstico:** Diversificação, Risco e Rentabilidade.
-        2. 💎 **Oportunidades:** FIIs com P/VP < 1.0, DY > 10% e vacância controlada (se souber).
-        3. ⚠️ **Pontos de Atenção:** Ativos com P/VP > 1.10 ou fundamentos ruins.
-        4. 🎯 **Ação:** Onde alocar o próximo aporte?
+        Patrimônio: R$ {df['Valor Atual'].sum():.2f}. Investido: R$ {df['Total Investido'].sum():.2f}
+        Gere Markdown curto e com emojis:
+        1. 📊 Diagnóstico Geral.
+        2. 💎 Oportunidades Claras.
+        3. ⚠️ Riscos Imediatos.
+        4. 🎯 Sugestão de Aporte.
         """
-    except Exception as e: return False, "Erro dados", ""
-
-    if not HAS_AI: return False, "Sem Chave API", prompt
-    
-    try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={API_KEY}"
         headers = {'Content-Type': 'application/json'}
         data = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -259,10 +256,31 @@ def analisar_carteira(df):
         else: return False, "Erro API", prompt
     except Exception as e: return False, str(e), prompt
 
-# --- HELPER PRIVACIDADE FORMATADO (BR) ---
+# --- IA: ANÁLISE ESPECÍFICA DO ATIVO ---
+def analisar_ativo_unico(ativo, pvp, dy, preco):
+    prompt = f"""
+    Analise o Fundo Imobiliário (FII) **{ativo}**.
+    Dados Atuais: Preço R$ {preco:.2f}, P/VP {pvp:.2f}, Dividend Yield {dy:.1%}.
+    
+    Responda em 3 bullet points curtos:
+    1. O que é o fundo (Setor/Tipo).
+    2. A métrica de preço está atrativa? (Sim/Não e porquê).
+    3. Veredito rápido: Compra ou Aguarda?
+    """
+    if not HAS_AI: return "Sem chave API."
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={API_KEY}"
+        headers = {'Content-Type': 'application/json'}
+        data = {"contents": [{"parts": [{"text": prompt}]}]}
+        response = requests.post(url, headers=headers, data=json.dumps(data))
+        if response.status_code == 200:
+            return response.json()['candidates'][0]['content']['parts'][0]['text']
+        return "Erro na análise."
+    except: return "Erro conexão."
+
+# --- HELPER PRIVACIDADE ---
 def fmt(valor, prefix="R$ ", is_pct=False):
     if st.session_state.get('privacy_mode'): return "••••••"
-    # Usa as funções de formatação BR
     if is_pct: return pct_br(valor)
     return real_br(valor)
 
@@ -303,7 +321,7 @@ if not df.empty:
     cls_val = "pos" if val_rs >= 0 else "neg"
     sinal = "+" if val_rs >= 0 else ""
 
-    # --- 5 CARDS PRINCIPAIS ---
+    # --- 5 CARDS ---
     st.markdown(f"""
     <div class="kpi-grid">
         <div class="kpi-card">
@@ -355,17 +373,13 @@ if not df.empty:
             if falta_investir < 0: falta_investir = 0
             
             cards_data.append({
-                "Ativo": row["Ativo"],
-                "PVP": row["P/VP"],
-                "DY": row["DY (12m)"],
-                "Preco": row["Preço Atual"],
-                "Peso": row["% Carteira"],
-                "Falta": falta_investir
+                "Ativo": row["Ativo"], "PVP": row["P/VP"], "DY": row["DY (12m)"],
+                "Preco": row["Preço Atual"], "Peso": row["% Carteira"], "Falta": falta_investir, "Link": row["Link"]
             })
 
         for idx, card in enumerate(cards_data):
             with cols[idx]:
-                # Usando real_br e pct_br para formatar o HTML
+                # CARD HTML
                 st.markdown(f"""
                 <div class="opp-card">
                     <div class="opp-header">
@@ -393,28 +407,44 @@ if not df.empty:
                     <div class="opp-footer">
                         Aportar: {real_br(card['Falta'])}
                     </div>
+                    <a href="{card['Link']}" target="_blank" class="opp-link-btn">🌐 Ver no Site</a>
                 </div>
                 """, unsafe_allow_html=True)
+                
+                # BOTÃO DE ANÁLISE IA (Nativo Streamlit, fora do HTML para funcionar)
+                if st.button(f"✨ Analisar {card['Ativo']}", key=f"btn_ai_{card['Ativo']}", use_container_width=True):
+                    with st.spinner("Analisando ativo..."):
+                        res_ativo = analisar_ativo_unico(card['Ativo'], card['PVP'], card['DY'], card['Preco'])
+                        st.session_state['analise_unica'] = {'ativo': card['Ativo'], 'texto': res_ativo}
+
+        # MOSTRAR RESULTADO DA ANÁLISE DE ATIVO ÚNICO
+        if 'analise_unica' in st.session_state:
+            st.write("")
+            with st.container(border=True):
+                c_a, c_b = st.columns([9,1])
+                with c_a: st.markdown(f"### 🤖 Análise: {st.session_state['analise_unica']['ativo']}")
+                with c_b: 
+                    if st.button("✕", key="close_single"): 
+                        del st.session_state['analise_unica']
+                        st.rerun()
+                st.info(st.session_state['analise_unica']['texto'])
+        
         st.write("") 
         st.divider()
 
-    # --- RESULTADO DA IA ---
+    # --- RESULTADO DA IA GERAL ---
     if st.session_state.get('ia_rodou'):
         c_head, c_close = st.columns([9, 1])
-        with c_head: st.markdown("### ✨ Insights da IA")
+        with c_head: st.markdown("### ✨ Insights da Carteira")
         with c_close:
             if st.button("✕", help="Fechar"):
                 st.session_state['ia_rodou'] = False
                 st.rerun()
-        
         if st.session_state['ia_sucesso']: st.info(st.session_state['ia_resultado'])
         else:
             st.warning("IA Indisponível. Copie o prompt:")
-            c1, c2 = st.columns([3, 1])
-            with c1: st.text_area("Prompt:", value=st.session_state['ia_prompt'], height=150)
-            with c2: 
-                st.write(""); st.write("")
-                st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app", use_container_width=True)
+            st.text_area("Prompt:", value=st.session_state['ia_prompt'], height=150)
+            st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app")
         st.divider()
 
     # --- ABAS ---
@@ -444,17 +474,11 @@ if not df.empty:
         st.subheader("🔥 Melhores Descontos")
         df_radar = df[(df["Tipo"] == "FII") & (df["P/VP"] < 1.0) & (df["P/VP"] > 0.1)].copy()
         if not df_radar.empty:
-            # APLICAÇÃO DE FORMATAÇÃO BRASILEIRA NA TABELA
             st.dataframe(
-                df_radar.sort_values("P/VP")[["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"]]
-                .style.format({
-                    "Preço Atual": real_br, 
-                    "Valor Atual": real_br, 
-                    "P/VP": "{:.2f}",
-                    "DY (12m)": pct_br, 
-                    "% Carteira": pct_br
-                })
-                .background_gradient(subset=["P/VP"], cmap="RdYlGn_r"),
+                df_radar.sort_values("P/VP")[["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"]].style.format({
+                    "Preço Atual": real_br, "Valor Atual": real_br, "P/VP": "{:.2f}",
+                    "DY (12m)": pct_br, "% Carteira": pct_br
+                }).background_gradient(subset=["P/VP"], cmap="RdYlGn_r"),
                 use_container_width=True
             )
 
@@ -465,20 +489,11 @@ if not df.empty:
         cols_show = ["Link", "Ativo", "Tipo", "Preço Médio", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"]
         df_view = df_view[[c for c in cols_show if c in df_view.columns]]
 
-        # APLICAÇÃO DE FORMATAÇÃO BRASILEIRA NA TABELA COMPLETA
         st.dataframe(
             df_view.style.format({
-                "Preço Médio": real_br, 
-                "Preço Atual": real_br, 
-                "Valor Atual": real_br, 
-                "Renda Mensal": real_br,
-                "Qtd": "{:.0f}", 
-                "Var %": pct_br, 
-                "DY (12m)": pct_br, 
-                "% Carteira": pct_br
-            })
-            .background_gradient(subset=["Var %"], cmap="RdYlGn", vmin=-0.5, vmax=0.5)
-            .background_gradient(subset=["DY (12m)"], cmap="Greens"),
+                "Preço Médio": real_br, "Preço Atual": real_br, "Valor Atual": real_br, "Renda Mensal": real_br,
+                "Qtd": "{:.0f}", "Var %": pct_br, "DY (12m)": pct_br, "% Carteira": pct_br
+            }).background_gradient(subset=["Var %"], cmap="RdYlGn", vmin=-0.5, vmax=0.5).background_gradient(subset=["DY (12m)"], cmap="Greens"),
             column_order=cols_show,
             column_config={
                 "Link": st.column_config.LinkColumn("", display_text="🔗", width="small"),
@@ -496,7 +511,6 @@ if not df.empty:
                 top_5 = df.sort_values("Valor Atual", ascending=False).head(5)["Ativo"].tolist()
                 sel = st.multiselect("Ativos:", ativos_bolsa, default=top_5)
             with c2: per = st.selectbox("Prazo:", ["1mo", "6mo", "1y", "5y"], index=1)
-            
             if sel:
                 with st.spinner("Carregando..."):
                     hist = obter_historico(sel, per)
