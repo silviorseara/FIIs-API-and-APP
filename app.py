@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 # ==========================================
 # ⚙️ CONFIGURAÇÃO
 # ==========================================
-st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💠")
+st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💎")
 
 # Modelo IA
 MODELO_IA = "gemini-2.5-flash-lite"
@@ -62,7 +62,7 @@ st.markdown("""
         height: 100%;
     }
 
-    /* CARD OPORTUNIDADE */
+    /* CARD OPORTUNIDADE (VERDE) */
     .opp-card {
         background: linear-gradient(135deg, rgba(20, 184, 166, 0.05) 0%, rgba(16, 185, 129, 0.1) 100%);
         border: 1px solid rgba(20, 184, 166, 0.3);
@@ -71,38 +71,54 @@ st.markdown("""
         text-align: center;
         box-shadow: 0 4px 12px rgba(0,0,0,0.05);
         height: 100%;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
+        display: flex; flex-direction: column; justify-content: space-between;
     }
-    .opp-header {
+    
+    /* CARD ALERTA/VENDA (LARANJA/VERMELHO) */
+    .alert-card {
+        background: linear-gradient(135deg, rgba(255, 87, 34, 0.05) 0%, rgba(255, 152, 0, 0.1) 100%);
+        border: 1px solid rgba(255, 87, 34, 0.3);
+        border-radius: 16px;
+        padding: 16px;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        height: 100%;
+        display: flex; flex-direction: column; justify-content: space-between;
+    }
+
+    .card-header {
         display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
         border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 8px;
     }
-    .opp-ticker { font-size: 1.4rem; font-weight: 800; color: #0f766e; }
-    .opp-price { font-size: 0.9rem; font-weight: 600; color: #555; }
+    .card-ticker { font-size: 1.4rem; font-weight: 800; color: #333; }
     
-    .opp-grid {
+    /* Cores Ticker */
+    .green-t { color: #0f766e; }
+    .red-t { color: #c0392b; }
+
+    .card-grid {
         display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.85rem; text-align: left;
     }
-    .opp-item { background: rgba(255,255,255,0.5); padding: 6px; border-radius: 8px; }
-    .opp-label { font-size: 0.7rem; color: #666; text-transform: uppercase; }
-    .opp-val { font-weight: 700; color: #333; }
+    .card-item { background: rgba(255,255,255,0.5); padding: 6px; border-radius: 8px; }
+    .card-label { font-size: 0.7rem; color: #666; text-transform: uppercase; }
+    .card-val { font-weight: 700; color: #333; }
     
     .opp-footer {
         margin-top: 12px; background-color: #ccfbf1; color: #0f766e;
-        padding: 8px; border-radius: 8px; font-size: 0.85rem; font-weight: 700;
-        margin-bottom: 8px;
+        padding: 8px; border-radius: 8px; font-size: 0.85rem; font-weight: 700; margin-bottom: 8px;
+    }
+    .alert-footer {
+        margin-top: 12px; background-color: #ffccbc; color: #bf360c;
+        padding: 8px; border-radius: 8px; font-size: 0.85rem; font-weight: 700; margin-bottom: 8px;
     }
     
-    /* Botão Link Externo */
-    .opp-link-btn {
+    .link-btn {
         display: block; width: 100%; text-decoration: none;
-        background-color: #fff; color: #0f766e; border: 1px solid #0f766e;
+        background-color: #fff; border: 1px solid #ccc; color: #555;
         padding: 6px 0; border-radius: 8px; font-size: 0.8rem; font-weight: 600;
         transition: all 0.2s; cursor: pointer; text-align: center;
     }
-    .opp-link-btn:hover { background-color: #0f766e; color: #fff; }
+    .link-btn:hover { background-color: #eee; }
 
     .kpi-label { font-size: 0.75rem; opacity: 0.7; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
     .kpi-value { font-size: 1.7rem; font-weight: 700; color: var(--text-color); margin-bottom: 8px; }
@@ -161,7 +177,6 @@ def obter_historico(tickers, periodo="6mo"):
 @st.cache_data(ttl=60)
 def carregar_tudo():
     dados = []
-    # 1. FIIs
     try:
         df_fiis = pd.read_csv(URL_FIIS, header=None)
         for index, row in df_fiis.iterrows():
@@ -181,7 +196,6 @@ def carregar_tudo():
             except: continue
     except: pass
 
-    # 2. Manual
     try:
         df_man = pd.read_csv(URL_MANUAL)
         if len(df_man.columns) >= 4:
@@ -212,13 +226,11 @@ def carregar_tudo():
     if df.empty: return df
     df = df.drop_duplicates(subset=["Ativo", "Tipo"], keep="first")
     
-    # Cálculos
     df["Valor Atual"] = df.apply(lambda x: x["Qtd"] * x["Preço Atual"] if x["Tipo"] in ["FII", "Ação"] else x["Preço Atual"], axis=1)
     df["Total Investido"] = df.apply(lambda x: x["Qtd"] * x["Preço Médio"] if x["Tipo"] in ["FII", "Ação"] and x["Preço Médio"] > 0 else x["Valor Atual"], axis=1)
     df["Lucro R$"] = df["Valor Atual"] - df["Total Investido"]
     df["Renda Mensal"] = df.apply(lambda x: (x["Valor Atual"] * x["DY (12m)"] / 12) if x["Tipo"] == "FII" else 0.0, axis=1)
     
-    # Limpeza
     df.replace([np.inf, -np.inf], 0.0, inplace=True)
     cols_num = ["Valor Atual", "Total Investido", "Preço Atual", "VP", "DY (12m)", "Renda Mensal", "Lucro R$", "Preço Médio"]
     for col in cols_num:
@@ -237,14 +249,14 @@ def analisar_carteira(df):
         df_resumo = df[df["Tipo"]!="Outros"][["Ativo", "Tipo", "Preço Atual", "P/VP", "DY (12m)", "Var %"]].copy()
         csv_data = df_resumo.to_csv(index=False)
         prompt = f"""
-        Você é um consultor financeiro sênior. Analise a carteira:
+        Você é um consultor financeiro sênior. Analise:
         {csv_data}
         Patrimônio: R$ {df['Valor Atual'].sum():.2f}. Investido: R$ {df['Total Investido'].sum():.2f}
-        Gere Markdown curto e com emojis:
-        1. 📊 Diagnóstico Geral (Diversificação/Risco).
-        2. 💎 Melhores Oportunidades (Baseado em P/VP e DY).
-        3. ⚠️ Riscos Imediatos (Ativos caros ou ruins).
-        4. 🎯 Sugestão Prática de Aporte.
+        Gere Markdown curto:
+        1. 📊 Diagnóstico Geral.
+        2. 💎 Melhores Oportunidades.
+        3. ⚠️ Riscos Imediatos.
+        4. 🎯 Sugestão Prática.
         """
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={API_KEY}"
         headers = {'Content-Type': 'application/json'}
@@ -255,20 +267,16 @@ def analisar_carteira(df):
         else: return False, "Erro API", prompt
     except Exception as e: return False, str(e), prompt
 
-# --- IA: ANÁLISE ATIVO ÚNICO (PROFUNDA) ---
+# --- IA: ANÁLISE ATIVO ÚNICO (COMPRA) ---
 def analisar_ativo_unico(ativo, pvp, dy, preco):
-    # Prompt Enriquecido para análise qualitativa
     prompt = f"""
-    Atue como um analista de FIIs sênior. Faça um Raio-X rápido e técnico do ativo **{ativo}**.
-    Dados de Mercado: Preço R$ {preco:.2f} | P/VP {pvp:.2f} | DY {dy:.1%}.
-    
-    Utilize seu conhecimento interno sobre o fundo para avaliar:
-    1. 🏢 **Perfil e Gestão:** Qual o setor? A gestão é de qualidade/renomada?
-    2. 📉 **Risco e Alavancagem:** O fundo é muito alavancado? Tem histórico de problemas ou vacância alta?
-    3. 💰 **Valuation:** O preço atual (P/VP {pvp:.2f}) é uma oportunidade real ou uma "armadilha de valor"?
-    4. ⚖️ **Veredito:** Compra, Aguarda ou Venda? (Seja direto).
-    
-    Mantenha a resposta concisa (máximo 4 linhas por tópico). Use bullet points.
+    Atue como analista. Raio-X do FII **{ativo}**.
+    Preço R$ {preco:.2f} | P/VP {pvp:.2f} | DY {dy:.1%}.
+    1. 🏢 Perfil e Gestão.
+    2. 📉 Risco e Alavancagem.
+    3. 💰 Valuation.
+    4. ⚖️ Veredito: Compra ou Aguarda?
+    Seja breve.
     """
     if not HAS_AI: return "Sem chave API."
     try:
@@ -278,7 +286,30 @@ def analisar_ativo_unico(ativo, pvp, dy, preco):
         response = requests.post(url, headers=headers, data=json.dumps(data))
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text']
-        return f"Erro na análise ({response.status_code})."
+        return "Erro API."
+    except: return "Erro conexão."
+
+# --- IA: ANÁLISE DE SAÍDA (VENDA) ---
+def analisar_saida(ativo, pm, pa, pvp, dy, motivo):
+    prompt = f"""
+    Analise a VENDA do FII **{ativo}**.
+    Meus dados: PM R$ {pm:.2f} | Preço Atual R$ {pa:.2f} | P/VP {pvp:.2f} | DY {dy:.1%}.
+    O ativo caiu no filtro de alerta por: "{motivo}".
+    
+    Responda em 3 pontos:
+    1. ⚠️ **Diagnóstico:** Por que ele está com métricas ruins? (Gestão, setor, juros?)
+    2. 📉 **Dilema:** Assumir o prejuízo/lucro agora ou esperar? Qual o custo de oportunidade?
+    3. 🛑 **Veredito:** MANTER (Acredita na recuperação) ou VENDER (Trocar por ativo melhor)?
+    """
+    if not HAS_AI: return "Sem chave API."
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_IA}:generateContent?key={API_KEY}"
+        headers = {'Content-Type': 'application/json'}
+        data = {"contents": [{"parts": [{"text": prompt}]}]}
+        response = requests.post(url, headers=headers, data=json.dumps(data))
+        if response.status_code == 200:
+            return response.json()['candidates'][0]['content']['parts'][0]['text']
+        return "Erro API."
     except: return "Erro conexão."
 
 # --- HELPER PRIVACIDADE ---
@@ -287,7 +318,7 @@ def fmt(valor, prefix="R$ ", is_pct=False):
     if is_pct: return pct_br(valor)
     return real_br(valor)
 
-# --- LAYOUT PRINCIPAL ---
+# --- LAYOUT ---
 c_top1, c_top2 = st.columns([6, 1])
 with c_top1: st.markdown("## 💠 Carteira Pro")
 with c_top2: 
@@ -324,7 +355,6 @@ if not df.empty:
     cls_val = "pos" if val_rs >= 0 else "neg"
     sinal = "+" if val_rs >= 0 else ""
 
-    # --- 5 CARDS ---
     st.markdown(f"""
     <div class="kpi-grid">
         <div class="kpi-card">
@@ -355,7 +385,36 @@ if not df.empty:
     </div>
     """, unsafe_allow_html=True)
 
-    # --- DESTAQUE: OPORTUNIDADES ---
+    # --- RESULTADO DA IA GERAL ---
+    if st.session_state.get('ia_rodou'):
+        c_head, c_close = st.columns([9, 1])
+        with c_head: st.markdown("### ✨ Insights da Carteira")
+        with c_close:
+            if st.button("✕", help="Fechar"):
+                st.session_state['ia_rodou'] = False
+                st.rerun()
+        if st.session_state['ia_sucesso']: st.info(st.session_state['ia_resultado'])
+        else:
+            st.warning("IA Indisponível. Copie o prompt:")
+            st.text_area("Prompt:", value=st.session_state['ia_prompt'], height=150)
+            st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app")
+        st.divider()
+
+    # --- MOSTRAR RESULTADO DA ANÁLISE ÚNICA (POPUP) ---
+    if 'analise_unica' in st.session_state:
+        st.write("")
+        with st.container(border=True):
+            c_a, c_b = st.columns([9,1])
+            with c_a: st.markdown(f"### 🤖 Raio-X: {st.session_state['analise_unica']['ativo']}")
+            with c_b: 
+                if st.button("✕", key="close_single"): 
+                    del st.session_state['analise_unica']
+                    st.rerun()
+            st.info(st.session_state['analise_unica']['texto'])
+        st.write("") 
+        st.divider()
+
+    # --- 1. OPORTUNIDADES (VERDE) ---
     media_peso = df["% Carteira"].mean()
     df_opp = df[
         (df["Tipo"] == "FII") & 
@@ -374,7 +433,6 @@ if not df.empty:
             valor_meta = patrimonio * media_peso
             falta_investir = valor_meta - row["Valor Atual"]
             if falta_investir < 0: falta_investir = 0
-            
             cards_data.append({
                 "Ativo": row["Ativo"], "PVP": row["P/VP"], "DY": row["DY (12m)"],
                 "Preco": row["Preço Atual"], "Peso": row["% Carteira"], "Falta": falta_investir, "Link": row["Link"]
@@ -384,69 +442,82 @@ if not df.empty:
             with cols[idx]:
                 st.markdown(f"""
                 <div class="opp-card">
-                    <div class="opp-header">
-                        <div class="opp-ticker">{card['Ativo']}</div>
+                    <div class="card-header">
+                        <div class="card-ticker green-t">{card['Ativo']}</div>
                         <div class="opp-price">{real_br(card['Preco'])}</div>
                     </div>
-                    <div class="opp-grid">
-                        <div class="opp-item">
-                            <div class="opp-label">P/VP</div>
-                            <div class="opp-val">{card['PVP']:.2f}</div>
-                        </div>
-                        <div class="opp-item">
-                            <div class="opp-label">DY 12M</div>
-                            <div class="opp-val">{pct_br(card['DY'])}</div>
-                        </div>
-                        <div class="opp-item">
-                            <div class="opp-label">PESO ATUAL</div>
-                            <div class="opp-val">{pct_br(card['Peso'])}</div>
-                        </div>
-                        <div class="opp-item">
-                            <div class="opp-label">META MÉDIA</div>
-                            <div class="opp-val">{pct_br(media_peso)}</div>
-                        </div>
+                    <div class="card-grid">
+                        <div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{card['PVP']:.2f}</div></div>
+                        <div class="card-item"><div class="card-label">DY 12M</div><div class="card-val">{pct_br(card['DY'])}</div></div>
+                        <div class="card-item"><div class="card-label">PESO</div><div class="card-val">{pct_br(card['Peso'])}</div></div>
+                        <div class="card-item"><div class="card-label">META</div><div class="card-val">{pct_br(media_peso)}</div></div>
                     </div>
-                    <div class="opp-footer">
-                        Aportar: {real_br(card['Falta'])}
-                    </div>
-                    <a href="{card['Link']}" target="_blank" class="opp-link-btn">🌐 Ver Detalhes</a>
+                    <div class="opp-footer">Aportar: {real_br(card['Falta'])}</div>
+                    <a href="{card['Link']}" target="_blank" class="link-btn">🌐 Ver Detalhes</a>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # BOTÃO DE ANÁLISE IA
-                if st.button(f"✨ Analisar {card['Ativo']}", key=f"btn_ai_{card['Ativo']}", use_container_width=True):
-                    with st.spinner("Acessando conhecimento do mercado..."):
-                        res_ativo = analisar_ativo_unico(card['Ativo'], card['PVP'], card['DY'], card['Preco'])
-                        st.session_state['analise_unica'] = {'ativo': card['Ativo'], 'texto': res_ativo}
-
-        # MOSTRAR RESULTADO DA ANÁLISE ÚNICA
-        if 'analise_unica' in st.session_state:
-            st.write("")
-            with st.container(border=True):
-                c_a, c_b = st.columns([9,1])
-                with c_a: st.markdown(f"### 🤖 Raio-X: {st.session_state['analise_unica']['ativo']}")
-                with c_b: 
-                    if st.button("✕", key="close_single"): 
-                        del st.session_state['analise_unica']
-                        st.rerun()
-                st.info(st.session_state['analise_unica']['texto'])
-        
-        st.write("") 
+                if st.button(f"✨ Analisar", key=f"btn_opp_{card['Ativo']}", use_container_width=True):
+                    with st.spinner("Analisando..."):
+                        res = analisar_ativo_unico(card['Ativo'], card['PVP'], card['DY'], card['Preco'])
+                        st.session_state['analise_unica'] = {'ativo': card['Ativo'], 'texto': res}
         st.divider()
 
-    # --- RESULTADO DA IA GERAL ---
-    if st.session_state.get('ia_rodou'):
-        c_head, c_close = st.columns([9, 1])
-        with c_head: st.markdown("### ✨ Insights da Carteira")
-        with c_close:
-            if st.button("✕", help="Fechar"):
-                st.session_state['ia_rodou'] = False
-                st.rerun()
-        if st.session_state['ia_sucesso']: st.info(st.session_state['ia_resultado'])
-        else:
-            st.warning("IA Indisponível. Copie o prompt:")
-            st.text_area("Prompt:", value=st.session_state['ia_prompt'], height=150)
-            st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app")
+    # --- 2. ALERTAS DE SAÍDA (LARANJA/VERMELHO) ---
+    media_dy = df["DY (12m)"].mean()
+    # Critérios de Alerta
+    df_alert = df[(df["Tipo"] == "FII") & (
+        (df["P/VP"] > 1.10) | # Caro
+        (df["DY (12m)"] < (media_dy * 0.85)) | # Baixo rendimento
+        ((df["P/VP"] < 0.70) & (df["DY (12m)"] < 0.08)) # Armadilha
+    )].copy()
+
+    # Define o motivo
+    def get_motivo(row):
+        mots = []
+        if row["P/VP"] > 1.10: mots.append("Caro (P/VP > 1.1)")
+        if row["DY (12m)"] < (media_dy * 0.85): mots.append("Baixo Yield")
+        if row["P/VP"] < 0.70 and row["DY (12m)"] < 0.08: mots.append("Armadilha de Valor?")
+        return " + ".join(mots)
+
+    if not df_alert.empty and not st.session_state.get('privacy_mode'):
+        st.subheader("⚠️ Radar de Atenção (Monitorar)")
+        
+        # Limita a 4 cards para não poluir
+        df_alert_view = df_alert.head(4)
+        cols_al = st.columns(len(df_alert_view))
+        
+        alerts_data = []
+        for index, row in df_alert_view.iterrows():
+            alerts_data.append({
+                "Ativo": row["Ativo"], "PVP": row["P/VP"], "DY": row["DY (12m)"],
+                "Preco": row["Preço Atual"], "PM": row["Preço Médio"], "Link": row["Link"],
+                "Motivo": get_motivo(row)
+            })
+
+        for idx, card in enumerate(alerts_data):
+            with cols_al[idx]:
+                st.markdown(f"""
+                <div class="alert-card">
+                    <div class="card-header">
+                        <div class="card-ticker red-t">{card['Ativo']}</div>
+                        <div class="opp-price">{real_br(card['Preco'])}</div>
+                    </div>
+                    <div class="card-grid">
+                        <div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{card['PVP']:.2f}</div></div>
+                        <div class="card-item"><div class="card-label">DY 12M</div><div class="card-val">{pct_br(card['DY'])}</div></div>
+                        <div class="card-item"><div class="card-label">MEU PM</div><div class="card-val">{real_br(card['PM'])}</div></div>
+                        <div class="card-item"><div class="card-label">ALERTA</div><div class="card-val" style="color:#d32f2f; font-size:0.7rem;">{card['Motivo']}</div></div>
+                    </div>
+                    <div class="alert-footer">Analisar Saída?</div>
+                    <a href="{card['Link']}" target="_blank" class="link-btn">🌐 Ver Detalhes</a>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if st.button(f"🔍 Diagnóstico", key=f"btn_alert_{card['Ativo']}", use_container_width=True):
+                    with st.spinner("Analisando venda..."):
+                        res = analisar_saida(card['Ativo'], card['PM'], card['Preco'], card['PVP'], card['DY'], card['Motivo'])
+                        st.session_state['analise_unica'] = {'ativo': card['Ativo'], 'texto': res}
         st.divider()
 
     # --- ABAS ---
