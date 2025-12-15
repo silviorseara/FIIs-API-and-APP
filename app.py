@@ -19,6 +19,7 @@ MODELO_IA = "gemini-2.5-flash-lite"
 try:
     URL_FIIS = st.secrets["SHEET_URL_FIIS"]
     URL_MANUAL = st.secrets["SHEET_URL_MANUAL"]
+    
     if "LINK_PLANILHA" in st.secrets:
         URL_EDIT = st.secrets["LINK_PLANILHA"]
     else:
@@ -116,6 +117,15 @@ st.markdown("""
     .neu { color: #374151; background-color: #f3f4f6; } 
     
     .stButton button { width: 100%; border-radius: 10px; font-weight: 600; }
+    
+    /* Botão Link Externo */
+    .link-btn {
+        display: block; width: 100%; text-decoration: none;
+        background-color: #fff; border: 1px solid #ccc; color: #555;
+        padding: 6px 0; border-radius: 8px; font-size: 0.8rem; font-weight: 600;
+        transition: all 0.2s; cursor: pointer; text-align: center; margin-top: 5px;
+    }
+    .link-btn:hover { background-color: #eee; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -139,6 +149,7 @@ def to_f(x):
         return float(str(x).replace("R$","").replace("%","").replace(" ", "").replace(".","").replace(",", "."))
     except: return 0.0
 
+# --- FORMATAÇÃO BRASILEIRA ---
 def real_br(valor):
     if not isinstance(valor, (int, float)): return valor
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -220,6 +231,7 @@ def carregar_tudo():
     df["Lucro R$"] = df["Valor Atual"] - df["Total Investido"]
     df["Renda Mensal"] = df.apply(lambda x: (x["Valor Atual"] * x["DY (12m)"] / 12) if x["Tipo"] == "FII" else 0.0, axis=1)
     
+    # Limpeza
     df.replace([np.inf, -np.inf], 0.0, inplace=True)
     cols_num = ["Valor Atual", "Total Investido", "Preço Atual", "VP", "DY (12m)", "Renda Mensal", "Lucro R$", "Preço Médio"]
     for col in cols_num:
@@ -373,119 +385,6 @@ if not df.empty:
     </div>
     """, unsafe_allow_html=True)
 
-    # --- DESTAQUE: OPORTUNIDADES ---
-    media_peso = df["% Carteira"].mean()
-    df_opp = df[
-        (df["Tipo"] == "FII") & 
-        (df["P/VP"] >= 0.80) & 
-        (df["P/VP"] <= 0.90) & 
-        (df["DY (12m)"] > 0.10) & 
-        (df["% Carteira"] < media_peso)
-    ].sort_values("P/VP", ascending=True)
-
-    # Contador para saber se tem mais além dos 4 mostrados
-    total_opp = len(df_opp)
-    df_opp_view = df_opp.head(4)
-
-    if not df_opp.empty and not st.session_state.get('privacy_mode'):
-        st.subheader(f"🎯 Oportunidades ({total_opp} encontrados)")
-        cols = st.columns(len(df_opp_view))
-        
-        for idx, row in enumerate(df_opp_view.itertuples(index=False)):
-            # Cálculo seguro com getattr para evitar erro de índice
-            ativo = getattr(row, "Ativo")
-            preco = getattr(row, "_5") # Valor Atual (Indice 5 no itertuples padrão do pandas se não renomear, mas vamos usar logica melhor)
-            # Melhor: Vamos usar os nomes das colunas direto do DF original filtrado
-            
-            # Recalculando variaveis para o loop (Método Seguro)
-            val_atual = df_opp_view.iloc[idx]["Valor Atual"]
-            peso_atual = df_opp_view.iloc[idx]["% Carteira"]
-            meta_val = patrimonio * media_peso
-            falta = meta_val - val_atual
-            if falta < 0: falta = 0
-            
-            ativo_nome = df_opp_view.iloc[idx]["Ativo"]
-            preco_un = df_opp_view.iloc[idx]["Preço Atual"]
-            pvp_val = df_opp_view.iloc[idx]["P/VP"]
-            dy_val = df_opp_view.iloc[idx]["DY (12m)"]
-            
-            with cols[idx]:
-                st.markdown(f"""
-                <div class="opp-card">
-                    <div class="card-header">
-                        <div class="card-ticker green-t">{ativo_nome}</div>
-                        <div class="opp-price">{real_br(preco_un)}</div>
-                    </div>
-                    <div class="card-grid">
-                        <div class="card-item"><div class="card-label">TENHO (R$)</div><div class="card-val">{real_br(val_atual)}</div></div>
-                        <div class="card-item"><div class="card-label">PESO</div><div class="card-val">{pct_br(peso_atual)}</div></div>
-                        <div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{pvp_val:.2f}</div></div>
-                        <div class="card-item"><div class="card-label">DY</div><div class="card-val">{pct_br(dy_val)}</div></div>
-                    </div>
-                    <div class="opp-footer">
-                        Falta: {real_br(falta)}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # BOTÃO QUE ABRE O MODAL
-                if st.button(f"✨ Analisar {ativo_nome}", key=f"btn_opp_{ativo_nome}", use_container_width=True):
-                    modal_analise(ativo_nome, "compra", preco=preco_un, pvp=pvp_val, dy=dy_val)
-        
-        st.write("")
-        st.divider()
-
-    # --- ALERTAS DE SAÍDA ---
-    media_dy = df["DY (12m)"].mean()
-    df_alert = df[(df["Tipo"] == "FII") & (
-        (df["P/VP"] > 1.10) | 
-        (df["DY (12m)"] < (media_dy * 0.85)) | 
-        ((df["P/VP"] < 0.70) & (df["DY (12m)"] < 0.08))
-    )].head(4)
-
-    if not df_alert.empty and not st.session_state.get('privacy_mode'):
-        st.subheader("⚠️ Radar de Atenção (Venda?)")
-        cols_al = st.columns(len(df_alert))
-        
-        for idx, row in enumerate(df_alert.itertuples(index=False)):
-            # Dados do DF Alert
-            ativo_nome = df_alert.iloc[idx]["Ativo"]
-            preco_un = df_alert.iloc[idx]["Preço Atual"]
-            pm_val = df_alert.iloc[idx]["Preço Médio"]
-            pvp_val = df_alert.iloc[idx]["P/VP"]
-            dy_val = df_alert.iloc[idx]["DY (12m)"]
-            
-            # Motivo
-            mots = []
-            if pvp_val > 1.10: mots.append("Caro")
-            if dy_val < (media_dy * 0.85): mots.append("Baixo Yield")
-            if pvp_val < 0.70 and dy_val < 0.08: mots.append("Armadilha?")
-            motivo_txt = " + ".join(mots)
-
-            with cols_al[idx]:
-                st.markdown(f"""
-                <div class="alert-card">
-                    <div class="card-header">
-                        <div class="card-ticker red-t">{ativo_nome}</div>
-                        <div class="opp-price">{real_br(preco_un)}</div>
-                    </div>
-                    <div class="card-grid">
-                        <div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{pvp_val:.2f}</div></div>
-                        <div class="card-item"><div class="card-label">DY</div><div class="card-val">{pct_br(dy_val)}</div></div>
-                        <div class="card-item"><div class="card-label">MEU PM</div><div class="card-val">{real_br(pm_val)}</div></div>
-                        <div class="card-item"><div class="card-label">ALERTA</div><div class="card-val" style="color:#d32f2f; font-size:0.7rem;">{motivo_txt}</div></div>
-                    </div>
-                    <div class="alert-footer">
-                        Avaliar Saída?
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # BOTÃO QUE ABRE O MODAL
-                if st.button(f"🔍 Analisar Venda", key=f"btn_alert_{ativo_nome}", use_container_width=True):
-                    modal_analise(ativo_nome, "venda", preco=preco_un, pm=pm_val, pvp=pvp_val, dy=dy_val, motivo=motivo_txt)
-        st.divider()
-
     # --- RESULTADO DA IA GERAL ---
     if st.session_state.get('ia_rodou'):
         c_head, c_close = st.columns([9, 1])
@@ -499,6 +398,101 @@ if not df.empty:
             st.warning("IA Indisponível. Copie o prompt:")
             st.text_area("Prompt:", value=st.session_state['ia_prompt'], height=150)
             st.link_button("🚀 Abrir Gemini", "https://gemini.google.com/app")
+        st.divider()
+
+    # --- DESTAQUE: OPORTUNIDADES ---
+    media_peso = df["% Carteira"].mean()
+    
+    # 1. Filtra
+    df_opp = df[
+        (df["Tipo"] == "FII") & 
+        (df["P/VP"] >= 0.80) & 
+        (df["P/VP"] <= 0.90) & 
+        (df["DY (12m)"] > 0.10) & 
+        (df["% Carteira"] < media_peso)
+    ].sort_values("P/VP", ascending=True).head(4)
+
+    if not df_opp.empty and not st.session_state.get('privacy_mode'):
+        st.subheader("🎯 Oportunidades de Aporte")
+        cols = st.columns(len(df_opp))
+        
+        # 2. Prepara Mini-DataFrame para o Loop (FIX DO ERRO ATTRIBUTE ERROR)
+        # Selecionamos explicitamente e renomeamos para garantir acesso seguro
+        df_cards = df_opp[["Ativo", "Preço Atual", "P/VP", "DY (12m)", "% Carteira", "Valor Atual", "Link"]].copy()
+        df_cards.columns = ["Ativo", "Preco", "PVP", "DY", "Peso", "Valor", "Link"]
+        
+        # Loop seguro usando itertuples com os nomes novos
+        for idx, row in enumerate(df_cards.itertuples(index=False)):
+            valor_meta = patrimonio * media_peso
+            falta_investir = valor_meta - row.Valor
+            if falta_investir < 0: falta_investir = 0
+            
+            with cols[idx]:
+                st.markdown(f"""
+                <div class="opp-card">
+                    <div class="card-header">
+                        <div class="card-ticker green-t">{row.Ativo}</div>
+                        <div class="opp-price">{real_br(row.Preco)}</div>
+                    </div>
+                    <div class="card-grid">
+                        <div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{row.PVP:.2f}</div></div>
+                        <div class="card-item"><div class="card-label">DY 12M</div><div class="card-val">{pct_br(row.DY)}</div></div>
+                        <div class="card-item"><div class="card-label">PESO</div><div class="card-val">{pct_br(row.Peso)}</div></div>
+                        <div class="card-item"><div class="card-label">META</div><div class="card-val">{pct_br(media_peso)}</div></div>
+                    </div>
+                    <div class="opp-footer">Aportar: {real_br(falta_investir)}</div>
+                    <a href="{row.Link}" target="_blank" class="link-btn">🌐 Ver Detalhes</a>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # BOTÃO QUE ABRE O MODAL
+                if st.button(f"✨ Analisar", key=f"btn_opp_{row.Ativo}", use_container_width=True):
+                    modal_analise(row.Ativo, "compra", preco=row.Preco, pvp=row.PVP, dy=row.DY)
+        st.divider()
+
+    # --- ALERTAS DE SAÍDA ---
+    media_dy = df["DY (12m)"].mean()
+    df_alert = df[(df["Tipo"] == "FII") & (
+        (df["P/VP"] > 1.10) | 
+        (df["DY (12m)"] < (media_dy * 0.85)) | 
+        ((df["P/VP"] < 0.70) & (df["DY (12m)"] < 0.08))
+    )].head(4)
+
+    if not df_alert.empty and not st.session_state.get('privacy_mode'):
+        st.subheader("⚠️ Radar de Atenção (Monitorar)")
+        cols_al = st.columns(len(df_alert))
+        
+        # Mesmo fix para alertas
+        df_alert_cards = df_alert[["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Preço Médio", "Link"]].copy()
+        df_alert_cards.columns = ["Ativo", "Preco", "PVP", "DY", "PM", "Link"]
+
+        for idx, row in enumerate(df_alert_cards.itertuples(index=False)):
+            mots = []
+            if row.PVP > 1.10: mots.append("Caro")
+            if row.DY < (media_dy * 0.85): mots.append("Baixo Yield")
+            if row.PVP < 0.70 and row.DY < 0.08: mots.append("Armadilha?")
+            motivo_txt = " + ".join(mots)
+
+            with cols_al[idx]:
+                st.markdown(f"""
+                <div class="alert-card">
+                    <div class="card-header">
+                        <div class="card-ticker red-t">{row.Ativo}</div>
+                        <div class="opp-price">{real_br(row.Preco)}</div>
+                    </div>
+                    <div class="card-grid">
+                        <div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{row.PVP:.2f}</div></div>
+                        <div class="card-item"><div class="card-label">DY</div><div class="card-val">{pct_br(row.DY)}</div></div>
+                        <div class="card-item"><div class="card-label">MEU PM</div><div class="card-val">{real_br(row.PM)}</div></div>
+                        <div class="card-item"><div class="card-label">ALERTA</div><div class="card-val" style="color:#d32f2f; font-size:0.7rem;">{motivo_txt}</div></div>
+                    </div>
+                    <div class="alert-footer">Avaliar Saída?</div>
+                    <a href="{row.Link}" target="_blank" class="link-btn">🌐 Ver Detalhes</a>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if st.button(f"🔍 Diagnóstico", key=f"btn_alert_{row.Ativo}", use_container_width=True):
+                    modal_analise(row.Ativo, "venda", preco=row.Preco, pm=row.PM, pvp=row.PVP, dy=row.DY, motivo=motivo_txt)
         st.divider()
 
     # --- ABAS ---
