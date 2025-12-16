@@ -227,40 +227,47 @@ def salvar_snapshot_google(df, patrimonio, investido):
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
         client = gspread.authorize(creds)
         
-        # 2. Abre Planilha (Tenta URL, se falhar tenta ID)
+        # 2. Abre Planilha (ESTRATÉGIA ROBUSTA: URL ou ID)
+        sh = None
+        url_planilha = st.secrets["SHEET_URL_FIIS"]
+        
         try:
-            # Tenta abrir direto pelo link
-            sh = client.open_by_url(st.secrets["SHEET_URL_FIIS"])
-        except:
-            # Se der erro, tenta extrair só o ID da planilha e abrir pela chave
-            # Isso resolve problemas quando o link tem "/edit#gid=0" no final
-            url_planilha = st.secrets["SHEET_URL_FIIS"]
-            sheet_id = url_planilha.split("/d/")[1].split("/")[0]
-            sh = client.open_by_key(sheet_id)
+            # Tentativa 1: Abrir direto pela URL
+            sh = client.open_by_url(url_planilha)
+        except Exception as e_url:
+            # Tentativa 2: Extrair o ID e abrir pela chave (caso a URL falhe)
+            try:
+                # O ID fica entre /d/ e /edit
+                sheet_id = url_planilha.split("/d/")[1].split("/")[0]
+                sh = client.open_by_key(sheet_id)
+            except Exception as e_id:
+                return False, f"❌ Erro ao abrir planilha. Verifique compartilhamento. Detalhe: {str(e_url)} | {str(e_id)}"
 
-        # Tenta pegar a aba ou cria se não existir
+        # 3. Seleciona ou Cria a Aba
         try:
             worksheet = sh.worksheet("Cache_Dados")
         except:
             worksheet = sh.add_worksheet(title="Cache_Dados", rows="100", cols="20")
         
-        # 3. Prepara Dados
-        worksheet.clear() # Limpa tudo
+        # 4. Prepara Dados e Salva
+        worksheet.clear()
         
-        # Cabeçalho de Controle (Linha 1)
         agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        # Salva Totais na linha 1 e 2
         worksheet.update('A1', [['Atualizado em', 'Patrimonio', 'Investido'], [agora, float(patrimonio), float(investido)]])
         
-        # Dados Detalhados (Linha 4 em diante)
+        # Salva Tabela na linha 4
+        # Converte tipos numpy para tipos nativos do Python (evita erro de JSON)
         df_export = df[['Ativo', 'Tipo', 'Preço Atual', 'Valor Atual', 'P/VP', 'DY (12m)', 'Setor']].copy()
-        
-        # Converte para lista e salva
+        df_export = df_export.fillna(0) # Remove NaNs
         dados_lista = [df_export.columns.values.tolist()] + df_export.values.tolist()
+        
         worksheet.update('A4', dados_lista)
         
         return True, f"✅ Dados salvos com sucesso às {agora}!"
+        
     except Exception as e:
-        return False, f"❌ Erro ao salvar: {str(e)}"
+        return False, f"❌ Erro Crítico ao Salvar: {str(e)}"
 
 @st.dialog("🤖 Análise Inteligente", width="large")
 def modal_analise(ativo, tipo_analise, **kwargs):
