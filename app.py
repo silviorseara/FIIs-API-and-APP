@@ -368,14 +368,45 @@ if not df.empty:
     
     st.write("") # Espaçamento
 
-    # --- CARDS KPI (Atualizados para mostrar Real vs Nominal) ---
-    # No card de renda mensal, vamos destacar a renda real, mas mostrar a nominal pequena
+# --- CARDS KPI (6 Cards agora) ---
+    custo_inflacao = renda_nominal - renda_real_disponivel
+    
     st.markdown(f"""<div class="kpi-grid">
-        <div class="kpi-card"><div class="kpi-label">Patrimônio</div><div class="kpi-value">{fmt(patr)}</div><div class="kpi-delta neu">Total</div></div>
-        <div class="kpi-card"><div class="kpi-label">Renda Real (Liq. Inflação)</div><div class="kpi-value">{fmt(renda_real_disponivel)}</div><div class="kpi-delta pos" title="Renda Nominal Recebida">Nominal: {fmt(renda_nominal)}</div></div>
-        <div class="kpi-card"><div class="kpi-label">Valorização</div><div class="kpi-value">{fmt(val_rs)}</div><div class="kpi-delta {cls_val}">{sinal}{fmt(val_pct, "", True)}</div></div>
-        <div class="kpi-card"><div class="kpi-label">Yield Real (a.a.)</div><div class="kpi-value">{pct_br(yield_real_perc)}</div><div class="kpi-delta neu">Acima do IPCA</div></div>
-        <div class="kpi-card"><div class="kpi-label">FIIs</div><div class="kpi-value">{fmt(fiis_total)}</div><div class="kpi-delta neu">{fmt(fiis_total/patr if patr>0 else 0, "", True)} Carteira</div></div>
+        <div class="kpi-card">
+            <div class="kpi-label">Patrimônio</div>
+            <div class="kpi-value">{fmt(patr)}</div>
+            <div class="kpi-delta neu">Total</div>
+        </div>
+        
+        <div class="kpi-card">
+            <div class="kpi-label">Investido</div>
+            <div class="kpi-value">{fmt(investido)}</div>
+            <div class="kpi-delta neu">Custo</div>
+        </div>
+        
+        <div class="kpi-card">
+            <div class="kpi-label">Valorização</div>
+            <div class="kpi-value">{fmt(val_rs)}</div>
+            <div class="kpi-delta {cls_val}">{sinal}{fmt(val_pct, "", True)}</div>
+        </div>
+
+        <div class="kpi-card" style="border: 1px solid rgba(16, 185, 129, 0.2);">
+            <div class="kpi-label" style="color:#0f766e; font-weight:700;">Renda Nominal</div>
+            <div class="kpi-value">{fmt(renda_nominal)}</div>
+            <div class="kpi-delta pos">Recebido</div>
+        </div>
+
+        <div class="kpi-card" style="background-color: #fff5f5; border: 1px solid rgba(220, 38, 38, 0.2);">
+            <div class="kpi-label" style="color:#991b1b; font-weight:700;">Renda Real</div>
+            <div class="kpi-value" style="color:#991b1b;">{fmt(renda_real_disponivel)}</div>
+            <div class="kpi-delta neg" title="Perda inflacionária mensal">- {fmt(custo_inflacao)} (IPCA)</div>
+        </div>
+
+        <div class="kpi-card">
+            <div class="kpi-label">FIIs</div>
+            <div class="kpi-value">{fmt(fiis_total)}</div>
+            <div class="kpi-delta neu">{fmt(fiis_total/patr if patr>0 else 0, "", True)} Carteira</div>
+        </div>
     </div>""", unsafe_allow_html=True)
 
     # OPORTUNIDADES
