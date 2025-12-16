@@ -32,5 +32,6 @@ jobs:
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
           EMAIL_DESTINO: ${{ secrets.EMAIL_DESTINO }}
           SHEET_URL_FIIS: ${{ secrets.SHEET_URL_FIIS }}
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }} # Faltava esta linha vital!
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
         run: python daily_report.py
