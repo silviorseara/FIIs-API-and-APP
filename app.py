@@ -61,7 +61,8 @@ st.markdown("""
     .alert-card { background: linear-gradient(135deg, rgba(255, 87, 34, 0.05) 0%, rgba(255, 152, 0, 0.1) 100%); border-color: rgba(255, 87, 34, 0.3); }
 
     .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 8px; }
-    .card-ticker { font-size: 1.4rem; font-weight: 800; color: #333; }
+    .card-ticker { font-size: 1.4rem; font-weight: 800; color: #333; line-height: 1.1; }
+    .card-sector { font-size: 0.75rem; color: #7f8c8d; font-weight: 600; text-transform: uppercase; } 
     .green-t { color: #0f766e; } .red-t { color: #c0392b; }
     
     .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.8rem; text-align: left; }
@@ -353,13 +354,28 @@ if not df.empty:
             pvp = df_opp.iloc[idx]["P/VP"]; dy = df_opp.iloc[idx]["DY (12m)"]
             peso = df_opp.iloc[idx]["% Carteira"]; valor_tem = df_opp.iloc[idx]["Valor Atual"]
             falta = (patr * media_peso) - valor_tem; link = df_opp.iloc[idx]["Link"]
+            setor = df_opp.iloc[idx]["Setor"] # <--- NOVA VARIÁVEL
 
             with cols[idx]:
-                st.markdown(f"""<div class="opp-card"><div class="card-header"><div class="card-ticker green-t">{ativo}</div><div class="opp-price">{real_br(preco)}</div></div>
-                <div class="card-grid"><div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{pvp:.2f}</div></div><div class="card-item"><div class="card-label">DY 12M</div><div class="card-val">{pct_br(dy)}</div></div>
-                <div class="card-item"><div class="card-label">PESO</div><div class="card-val">{pct_br(peso)}</div></div><div class="card-item"><div class="card-label">TENHO</div><div class="card-val">{real_br(valor_tem)}</div></div></div>
-                <div class="opp-footer">Meta Média: {pct_br(media_peso)} <br>Aporte Sugerido: {real_br(max(0, falta))}</div>
-                <a href="{link}" target="_blank" class="link-btn">🌐 Ver Detalhes</a></div>""", unsafe_allow_html=True)
+                # AQUI ABAIXO: Adicionei uma div envolvendo Ticker e Setor
+                st.markdown(f"""<div class="opp-card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-ticker green-t">{ativo}</div>
+                            <div class="card-sector">{setor}</div>
+                        </div>
+                        <div class="opp-price">{real_br(preco)}</div>
+                    </div>
+                    <div class="card-grid">
+                        <div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{pvp:.2f}</div></div>
+                        <div class="card-item"><div class="card-label">DY 12M</div><div class="card-val">{pct_br(dy)}</div></div>
+                        <div class="card-item"><div class="card-label">PESO</div><div class="card-val">{pct_br(peso)}</div></div>
+                        <div class="card-item"><div class="card-label">TENHO</div><div class="card-val">{real_br(valor_tem)}</div></div>
+                    </div>
+                    <div class="opp-footer">Meta Média: {pct_br(media_peso)} <br>Aporte Sugerido: {real_br(max(0, falta))}</div>
+                    <a href="{link}" target="_blank" class="link-btn">🌐 Ver Detalhes</a>
+                </div>""", unsafe_allow_html=True)
+                
                 if st.button(f"✨ Analisar {ativo}", key=f"opp_{ativo}", use_container_width=True): 
                     modal_analise(ativo, "compra", preco=preco, pvp=pvp, dy=dy)
         st.divider()
@@ -374,6 +390,7 @@ if not df.empty:
             pm = df_alert.iloc[idx]["Preço Médio"]; pvp = df_alert.iloc[idx]["P/VP"]
             dy = df_alert.iloc[idx]["DY (12m)"]; peso = df_alert.iloc[idx]["% Carteira"]
             valor_tem = df_alert.iloc[idx]["Valor Atual"]; link = df_alert.iloc[idx]["Link"]
+            setor = df_alert.iloc[idx]["Setor"] # <--- NOVA VARIÁVEL
             
             mots = []
             if pvp > 1.1: mots.append("Caro")
@@ -382,12 +399,26 @@ if not df.empty:
             motivo_txt = " + ".join(mots)
 
             with cols[idx]:
-                st.markdown(f"""<div class="alert-card"><div class="card-header"><div class="card-ticker red-t">{ativo}</div><div class="opp-price">{real_br(preco)}</div></div>
-                <div class="card-grid"><div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{pvp:.2f}</div></div><div class="card-item"><div class="card-label">DY</div><div class="card-val">{pct_br(dy)}</div></div>
-                <div class="card-item"><div class="card-label">MEU PM</div><div class="card-val">{real_br(pm)}</div></div><div class="card-item"><div class="card-label">PESO</div><div class="card-val">{pct_br(peso)}</div></div>
-                <div class="card-item" style="grid-column: span 2;"><div class="card-label">TENHO (R$)</div><div class="card-val">{real_br(valor_tem)}</div></div></div>
-                <div class="alert-footer" style="background:white; border:1px solid #ffccbc; color:#bf360c;">🚨 {motivo_txt}</div>
-                <a href="{link}" target="_blank" class="link-btn">🌐 Ver Detalhes</a></div>""", unsafe_allow_html=True)
+                # AQUI ABAIXO: Mesma alteração no Header
+                st.markdown(f"""<div class="alert-card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-ticker red-t">{ativo}</div>
+                            <div class="card-sector">{setor}</div>
+                        </div>
+                        <div class="opp-price">{real_br(preco)}</div>
+                    </div>
+                    <div class="card-grid">
+                        <div class="card-item"><div class="card-label">P/VP</div><div class="card-val">{pvp:.2f}</div></div>
+                        <div class="card-item"><div class="card-label">DY</div><div class="card-val">{pct_br(dy)}</div></div>
+                        <div class="card-item"><div class="card-label">MEU PM</div><div class="card-val">{real_br(pm)}</div></div>
+                        <div class="card-item"><div class="card-label">PESO</div><div class="card-val">{pct_br(peso)}</div></div>
+                        <div class="card-item" style="grid-column: span 2;"><div class="card-label">TENHO (R$)</div><div class="card-val">{real_br(valor_tem)}</div></div>
+                    </div>
+                    <div class="alert-footer" style="background:white; border:1px solid #ffccbc; color:#bf360c;">🚨 {motivo_txt}</div>
+                    <a href="{link}" target="_blank" class="link-btn">🌐 Ver Detalhes</a>
+                </div>""", unsafe_allow_html=True)
+                
                 if st.button(f"🔍 Diagnóstico", key=f"alert_{ativo}", use_container_width=True): 
                     modal_analise(ativo, "venda", preco=preco, pm=pm, pvp=pvp, dy=dy, motivo=motivo_txt)
         st.divider()
