@@ -299,7 +299,7 @@ with st.sidebar:
     
     st.divider()
     st.subheader("🎯 Metas (Termômetro)")
-    meta_renda = st.number_input("Meta Renda (R$)", value=12500, step=500)
+    meta_renda = st.number_input("Meta Renda (R$)", value=10000, step=500)
     
     if 'ipca_cache' not in st.session_state: st.session_state['ipca_cache'] = get_ipca_acumulado_12m()
     ipca_atual = st.session_state['ipca_cache']
