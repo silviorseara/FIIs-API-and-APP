@@ -309,12 +309,32 @@ with st.sidebar:
     if not df.empty and st.button("✨ IA Geral", type="primary", use_container_width=True): pass
 
 if not df.empty:
-    patr = df["Valor Atual"].sum(); renda = df["Renda Mensal"].sum(); investido = df["Total Investido"].sum()
-    val_rs = patr - investido; val_pct = val_rs / investido if investido > 0 else 0
+    patr = df["Valor Atual"].sum()
+    renda_nominal = df["Renda Mensal"].sum()
+    investido = df["Total Investido"].sum()
+    
+    # --- CÁLCULO DA REALIDADE (Ajuste de Inflação) ---
+    # 1. Converter IPCA anual para mensal (Juros Compostos)
+    ipca_mensal = ((1 + ipca_atual) ** (1/12)) - 1
+    
+    # 2. Quanto do dividendo deve ser REINVESTIDO obrigatoriamente para manter o poder de compra do principal
+    custo_manutencao_patrimonio = patr * ipca_mensal
+    
+    # 3. Renda Real (O que sobra para gastar sem corroer o patrimônio)
+    renda_real_disponivel = renda_nominal - custo_manutencao_patrimonio
+    
+    # 4. Yield Real Anualizado (Métrica percentual ajustada)
+    # Fórmula de Fisher aproximada para o todo: ((1 + Yield_Nominal) / (1 + Inflação)) - 1
+    yield_nominal_anual = (renda_nominal * 12) / patr if patr > 0 else 0
+    yield_real_perc = ((1 + yield_nominal_anual) / (1 + ipca_atual)) - 1
+
+    # --- MÉTRICAS DE CARTEIRA ---
+    val_rs = patr - investido
+    val_pct = val_rs / investido if investido > 0 else 0
     fiis_total = df[df["Tipo"]=="FII"]["Valor Atual"].sum()
     cls_val = "pos" if val_rs >= 0 else "neg"; sinal = "+" if val_rs >= 0 else ""
 
-    # AUTO-SAVE NO CARREGAMENTO
+    # --- AUTO-SAVE (Mantedo sua lógica) ---
     if 'dados_salvos' not in st.session_state:
         with st.spinner("Sincronizando dados com o Robô..."):
             sucesso, msg = salvar_snapshot_google(df, patr, investido)
@@ -323,22 +343,38 @@ if not df.empty:
                 st.toast("✅ Dados atualizados na nuvem!", icon="☁️")
             else: st.error(f"Falha Auto-Save: {msg}")
 
-    # TERMÔMETRO
-    perc_lib = renda / meta_renda if meta_renda > 0 else 0
-    dy_real = ((renda*12)/patr if patr>0 else 0) - ipca_atual
-    c_t1, c_t2 = st.columns([3, 1])
-    with c_t1: st.markdown(f"**🌡️ Liberdade Financeira:** {perc_lib:.1%} da Meta"); st.progress(min(perc_lib, 1.0))
-    with c_t2: 
-        cor = "green" if dy_real > 0 else "red"
-        st.markdown(f"<div style='text-align:center; background:#f0f2f6; padding:5px; border-radius:10px;'><small>Yield Real</small><br><strong style='color:{cor}'>{dy_real:.2%}</strong></div>", unsafe_allow_html=True)
-    st.write("")
+    # --- TERMÔMETRO (AGORA HONESTO) ---
+    # O progresso agora é sobre a Renda Real, não a Nominal
+    perc_lib = renda_real_disponivel / meta_renda if meta_renda > 0 else 0
+    
+    # Se a inflação for maior que o dividendo, a renda real é negativa (consumo de capital)
+    perc_lib = max(0.0, perc_lib) 
 
-    # CARDS
+    c_t1, c_t2 = st.columns([3, 1])
+    
+    with c_t1: 
+        st.markdown(f"**🌡️ Liberdade Financeira REAL:** {perc_lib:.1%} da Meta (Livre de Inflação)")
+        st.progress(min(perc_lib, 1.0))
+        
+    with c_t2: 
+        cor = "green" if yield_real_perc > 0 else "red"
+        # Mostra o Custo da Inflação em R$ para "doer" visualmente
+        st.markdown(f"""
+        <div style='text-align:center; background:#f0f2f6; padding:8px; border-radius:10px;'>
+            <small style='color:#7f8c8d'>Reposição Inflacionária</small><br>
+            <strong style='color:#c0392b'>- {fmt(custo_manutencao_patrimonio)}/mês</strong>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.write("") # Espaçamento
+
+    # --- CARDS KPI (Atualizados para mostrar Real vs Nominal) ---
+    # No card de renda mensal, vamos destacar a renda real, mas mostrar a nominal pequena
     st.markdown(f"""<div class="kpi-grid">
         <div class="kpi-card"><div class="kpi-label">Patrimônio</div><div class="kpi-value">{fmt(patr)}</div><div class="kpi-delta neu">Total</div></div>
-        <div class="kpi-card"><div class="kpi-label">Investido</div><div class="kpi-value">{fmt(investido)}</div><div class="kpi-delta neu">Custo</div></div>
+        <div class="kpi-card"><div class="kpi-label">Renda Real (Liq. Inflação)</div><div class="kpi-value">{fmt(renda_real_disponivel)}</div><div class="kpi-delta pos" title="Renda Nominal Recebida">Nominal: {fmt(renda_nominal)}</div></div>
         <div class="kpi-card"><div class="kpi-label">Valorização</div><div class="kpi-value">{fmt(val_rs)}</div><div class="kpi-delta {cls_val}">{sinal}{fmt(val_pct, "", True)}</div></div>
-        <div class="kpi-card"><div class="kpi-label">Renda Mensal</div><div class="kpi-value">{fmt(renda)}</div><div class="kpi-delta pos">Dividendos</div></div>
+        <div class="kpi-card"><div class="kpi-label">Yield Real (a.a.)</div><div class="kpi-value">{pct_br(yield_real_perc)}</div><div class="kpi-delta neu">Acima do IPCA</div></div>
         <div class="kpi-card"><div class="kpi-label">FIIs</div><div class="kpi-value">{fmt(fiis_total)}</div><div class="kpi-delta neu">{fmt(fiis_total/patr if patr>0 else 0, "", True)} Carteira</div></div>
     </div>""", unsafe_allow_html=True)
 
