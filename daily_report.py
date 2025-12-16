@@ -14,11 +14,11 @@ try:
     EMAIL_USER = os.environ["EMAIL_USER"]
     EMAIL_PASS = os.environ["EMAIL_PASS"]
     EMAIL_DESTINO = os.environ["EMAIL_DESTINO"]
-    # Pega o JSON de credenciais dos Segredos e converte para dicionário
     GOOGLE_CREDENTIALS = json.loads(os.environ["GOOGLE_CREDENTIALS"])
-    SHEET_URL = os.environ["SHEET_URL_FIIS"] # Usa a mesma URL da planilha principal
+    # Agora usamos o ID, que é mais seguro que a URL
+    SHEET_ID = os.environ["SHEET_ID"] 
 except KeyError as e:
-    print(f"Erro Config: {e}")
+    print(f"Erro Config: Variável {e} não encontrada nos Segredos.")
     sys.exit(1)
 
 def ler_cache_google():
@@ -28,15 +28,22 @@ def ler_cache_google():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(GOOGLE_CREDENTIALS, scope)
         client = gspread.authorize(creds)
         
-        sh = client.open_by_url(SHEET_URL)
+        # Abre diretamente pelo ID (Infalível se o e-mail estiver compartilhado)
+        sh = client.open_by_key(SHEET_ID)
         ws = sh.worksheet("Cache_Dados")
         
-        # Lê Totais (Linha 2)
-        # A1=Header, A2=Dados. Colunas: A=Data, B=Patrimonio, C=Investido
-        totais = ws.get("A2:C2")[0] 
+        # Lê Totais (Linha 2 - Colunas B e C)
+        # O gspread lê como matriz. A2 é [Data, Patrimonio, Investido]
+        header_vals = ws.get("A2:C2")
+        
+        if not header_vals:
+            return False, None, 0, 0, "Planilha Cache vazia. Salve no App primeiro."
+            
+        totais = header_vals[0]
         data_att = totais[0]
-        patrimonio = float(totais[1])
-        investido = float(totais[2])
+        # Limpeza extra para garantir que leia números (remove R$, pontos, etc se houver)
+        patrimonio = float(str(totais[1]).replace("R$", "").replace(".", "").replace(",", ".").strip())
+        investido = float(str(totais[2]).replace("R$", "").replace(".", "").replace(",", ".").strip())
         
         # Lê Tabela (A partir da linha 4)
         dados_tabela = ws.get_all_records(head=4)
@@ -46,14 +53,13 @@ def ler_cache_google():
         
     except Exception as e:
         print(f"Erro leitura: {e}")
-        return False, None, 0, 0, ""
+        return False, None, 0, 0, str(e)
 
 def enviar_email(df, patr, inv, data_att):
     print("📧 Preparando e-mail...")
     lucro = patr - inv
     cor = "green" if lucro >= 0 else "red"
     
-    # Gera HTML Simples
     html = f"""
     <html><body style="font-family:Arial, color:#333;">
     <div style="background:#0f766e; padding:20px; text-align:center; color:white; border-radius:8px 8px 0 0;">
@@ -66,9 +72,9 @@ def enviar_email(df, patr, inv, data_att):
             <tr><td>Investido:</td><td align="right">R$ {inv:,.2f}</td></tr>
             <tr><td>Resultado:</td><td align="right" style="color:{cor}"><b>R$ {lucro:,.2f}</b></td></tr>
         </table>
-        <p style="text-align:center; color:#666; font-size:12px;">
-            *Valores exatos conforme visualizado no App Carteira Pro.
-        </p>
+        <div style="background-color:#f9fafb; padding:10px; border-radius:5px; font-size:12px; color:#555;">
+            <p>ℹ️ Este relatório usa os dados exatos calculados pelo seu Painel.</p>
+        </div>
         <br><center><a href="https://fiis-api-and-app.onrender.com" style="background:#0f766e; color:white; padding:10px 20px; text-decoration:none; border-radius:5px">Acessar App</a></center>
     </div>
     </body></html>
@@ -92,4 +98,4 @@ if __name__ == "__main__":
     if sucesso:
         enviar_email(df, p, i, d)
     else:
-        print("Falha ao ler cache. O App já salvou os dados hoje?")
+        print(f"Falha: {d}")
