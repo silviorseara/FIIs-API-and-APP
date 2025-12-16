@@ -135,7 +135,7 @@ def enviar_email(patr, inv, data_att, texto_ia):
         </div>
         
         <br><center>
-            <a href="https://fiis-api-and-app.onrender.com" style="background:#0f766e; color:white; padding:12px 24px; text-decoration:none; border-radius:5px; font-weight:bold;">
+            <a href="https://gestaofiis.streamlit.app/" style="background:#0f766e; color:white; padding:12px 24px; text-decoration:none; border-radius:5px; font-weight:bold;">
                 Acessar Painel
             </a>
         </center>
