@@ -221,22 +221,46 @@ def carregar_tudo():
 
 def salvar_snapshot_google(df, patrimonio, investido):
     try:
+        # 1. Autenticação
         creds_json = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
         scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
         client = gspread.authorize(creds)
-        sh = client.open_by_url(st.secrets["SHEET_URL_FIIS"]) 
-        try: worksheet = sh.worksheet("Cache_Dados")
-        except: worksheet = sh.add_worksheet(title="Cache_Dados", rows="100", cols="20")
         
-        worksheet.clear()
+        # 2. Abre Planilha (Tenta URL, se falhar tenta ID)
+        try:
+            # Tenta abrir direto pelo link
+            sh = client.open_by_url(st.secrets["SHEET_URL_FIIS"])
+        except:
+            # Se der erro, tenta extrair só o ID da planilha e abrir pela chave
+            # Isso resolve problemas quando o link tem "/edit#gid=0" no final
+            url_planilha = st.secrets["SHEET_URL_FIIS"]
+            sheet_id = url_planilha.split("/d/")[1].split("/")[0]
+            sh = client.open_by_key(sheet_id)
+
+        # Tenta pegar a aba ou cria se não existir
+        try:
+            worksheet = sh.worksheet("Cache_Dados")
+        except:
+            worksheet = sh.add_worksheet(title="Cache_Dados", rows="100", cols="20")
+        
+        # 3. Prepara Dados
+        worksheet.clear() # Limpa tudo
+        
+        # Cabeçalho de Controle (Linha 1)
         agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         worksheet.update('A1', [['Atualizado em', 'Patrimonio', 'Investido'], [agora, float(patrimonio), float(investido)]])
+        
+        # Dados Detalhados (Linha 4 em diante)
         df_export = df[['Ativo', 'Tipo', 'Preço Atual', 'Valor Atual', 'P/VP', 'DY (12m)', 'Setor']].copy()
+        
+        # Converte para lista e salva
         dados_lista = [df_export.columns.values.tolist()] + df_export.values.tolist()
         worksheet.update('A4', dados_lista)
-        return True, f"✅ Dados sincronizados às {agora}"
-    except Exception as e: return False, f"❌ Erro ao salvar: {str(e)}"
+        
+        return True, f"✅ Dados salvos com sucesso às {agora}!"
+    except Exception as e:
+        return False, f"❌ Erro ao salvar: {str(e)}"
 
 @st.dialog("🤖 Análise Inteligente", width="large")
 def modal_analise(ativo, tipo_analise, **kwargs):
