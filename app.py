@@ -368,10 +368,15 @@ if not df.empty:
     
     st.write("") # Espaçamento
 
-    # --- CARDS KPI (6 Cards agora) ---
+# --- CÁLCULO DAS VARIÁVEIS EXTRAS ---
     custo_inflacao = renda_nominal - renda_real_disponivel
     
-    st.markdown(f"""<div class="kpi-grid">
+    # Garantir que não dê erro de divisão por zero na string
+    perc_fiis = fiis_total/patr if patr > 0 else 0
+
+    # --- MONTAGEM DO HTML (Separado para não quebrar) ---
+    html_kpi = f"""
+    <div class="kpi-grid">
         <div class="kpi-card">
             <div class="kpi-label">Patrimônio</div>
             <div class="kpi-value">{fmt(patr)}</div>
@@ -390,24 +395,28 @@ if not df.empty:
             <div class="kpi-delta {cls_val}">{sinal}{fmt(val_pct, "", True)}</div>
         </div>
 
-        <div class="kpi-card" style="border: 1px solid rgba(16, 185, 129, 0.2);">
-            <div class="kpi-label" style="color:#0f766e; font-weight:700;">Renda Nominal</div>
-            <div class="kpi-value">{fmt(renda_nominal)}</div>
+        <div class="kpi-card" style="border: 1px solid rgba(16, 185, 129, 0.3);">
+            <div class="kpi-label" style="color:#047857; font-weight:700;">Renda Nominal</div>
+            <div class="kpi-value" style="color:#065f46;">{fmt(renda_nominal)}</div>
             <div class="kpi-delta pos">Recebido</div>
         </div>
 
-        <div class="kpi-card" style="background-color: #fff5f5; border: 1px solid rgba(220, 38, 38, 0.2);">
-            <div class="kpi-label" style="color:#991b1b; font-weight:700;">Renda Real</div>
-            <div class="kpi-value" style="color:#991b1b;">{fmt(renda_real_disponivel)}</div>
+        <div class="kpi-card" style="background-color: #fff1f2; border: 1px solid rgba(225, 29, 72, 0.3);">
+            <div class="kpi-label" style="color:#be123c; font-weight:700;">Renda Real</div>
+            <div class="kpi-value" style="color:#9f1239;">{fmt(renda_real_disponivel)}</div>
             <div class="kpi-delta neg" title="Perda inflacionária mensal">- {fmt(custo_inflacao)} (IPCA)</div>
         </div>
 
         <div class="kpi-card">
             <div class="kpi-label">FIIs</div>
             <div class="kpi-value">{fmt(fiis_total)}</div>
-            <div class="kpi-delta neu">{fmt(fiis_total/patr if patr>0 else 0, "", True)} Carteira</div>
+            <div class="kpi-delta neu">{fmt(perc_fiis, "", True)} Carteira</div>
         </div>
-    </div>""", unsafe_allow_html=True)
+    </div>
+    """
+
+    # --- RENDERIZAÇÃO ---
+    st.markdown(html_kpi, unsafe_allow_html=True)
 
     # OPORTUNIDADES
     media_peso = df["% Carteira"].mean(); media_dy = df["DY (12m)"].mean()
