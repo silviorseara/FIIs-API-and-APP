@@ -30,7 +30,15 @@ COL_DATA_COM = 20
 COL_SETOR = 24
 
 try:
-    URL_FIIS = st.secrets["SHEET_URL_FIIS"]
+    # --- NOVA LÓGICA: USA O ID PARA TUDO ---
+    if "SHEET_ID" in st.secrets:
+        SHEET_ID = st.secrets["SHEET_ID"]
+        # Constrói o link de exportação CSV para o Pandas ler
+        URL_FIIS = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+    else:
+        # Fallback para o modo antigo se não tiver ID (mas recomendamos usar o ID)
+        URL_FIIS = st.secrets["SHEET_URL_FIIS"]
+        
     URL_MANUAL = st.secrets["SHEET_URL_MANUAL"]
     
     if "LINK_PLANILHA" in st.secrets:
@@ -44,7 +52,7 @@ try:
     else:
         HAS_AI = False
 except:
-    st.error("Erro: Configure URLs e GOOGLE_API_KEY no secrets.toml")
+    st.error("Erro Crítico: Configure SHEET_ID, SHEET_URL_MANUAL e GOOGLE_API_KEY no secrets.toml")
     st.stop()
 
 # --- CSS REFINADO ---
@@ -85,7 +93,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- FUNÇÕES ---
+# --- FUNÇÕES AUXILIARES ---
 def real_br(valor): return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if isinstance(valor, (int, float)) else valor
 def pct_br(valor): return f"{valor:.2%}".replace(".", ",") if isinstance(valor, (int, float)) else valor
 def to_f(x): 
@@ -146,10 +154,11 @@ def buscar_video(ticker):
     except: pass
     return None
 
+# --- CARREGAMENTO DE DADOS ---
 @st.cache_data(ttl=60)
 def carregar_tudo():
     dados = []
-    # 1. FIIs
+    # 1. FIIs (Lê do CSV gerado pelo ID)
     try:
         df_fiis = pd.read_csv(URL_FIIS, header=None)
         for index, row in df_fiis.iterrows():
@@ -187,12 +196,14 @@ def carregar_tudo():
                     tipo_raw = str(row["Tipo"]).strip().upper()
                     qtd = to_f(row["Qtd"]); val_input = to_f(row["Valor"])
                     tipo = "Outros"; pm = 0.0; pa = val_input; link = None; setor="Ação/Outros"; dcom="-"
+                    
                     if "AÇÃO" in tipo_raw or "ACAO" in tipo_raw:
                         tipo = "Ação"; pm = val_input
                         plive = get_stock_price(ativo); pa = plive if plive > 0 else val_input
                         link = f"https://investidor10.com.br/acoes/{ativo.lower()}/"
                         setor = "Ações"
                     else: qtd = 1
+                    
                     dados.append({
                         "Ativo": ativo, "Tipo": tipo, "Setor": setor, "Qtd": qtd,
                         "Preço Médio": pm, "Preço Atual": pa, "VP": 0.0, "DY (12m)": 0.0, 
@@ -205,6 +216,7 @@ def carregar_tudo():
     if df.empty: return df
     df = df.drop_duplicates(subset=["Ativo", "Tipo"], keep="first")
     
+    # Cálculos
     df["Valor Atual"] = df.apply(lambda x: x["Qtd"] * x["Preço Atual"] if x["Tipo"] in ["FII", "Ação"] else x["Preço Atual"], axis=1)
     df["Total Investido"] = df.apply(lambda x: x["Qtd"] * x["Preço Médio"] if x["Tipo"] in ["FII", "Ação"] and x["Preço Médio"] > 0 else x["Valor Atual"], axis=1)
     df["Lucro R$"] = df["Valor Atual"] - df["Total Investido"]
@@ -219,42 +231,42 @@ def carregar_tudo():
     df["% Carteira"] = df["Valor Atual"] / df["Valor Atual"].sum() if df["Valor Atual"].sum() > 0 else 0.0
     return df
 
+# --- SALVAMENTO (USA ID PURO) ---
 def salvar_snapshot_google(df, patrimonio, investido):
     try:
-        # 1. Autenticação
+        # Autenticação
         creds_json = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
         scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
         client = gspread.authorize(creds)
         
-        # 2. Abre a Planilha pelo ID (Infalível)
-        # Certifique-se de ter adicionado SHEET_ID no secrets.toml
-        sheet_id = st.secrets["SHEET_ID"]
-        sh = client.open_by_key(sheet_id) 
+        # Abre pelo ID (Solução Definitiva para o 404)
+        if "SHEET_ID" in st.secrets:
+            sheet_id = st.secrets["SHEET_ID"]
+            sh = client.open_by_key(sheet_id)
+        else:
+            # Tenta extrair da URL se não tiver ID (fallback)
+            url = st.secrets["SHEET_URL_FIIS"]
+            sheet_id = url.split("/d/")[1].split("/")[0]
+            sh = client.open_by_key(sheet_id)
 
-        # 3. Seleciona ou Cria a Aba
-        try:
-            worksheet = sh.worksheet("Cache_Dados")
-        except:
-            worksheet = sh.add_worksheet(title="Cache_Dados", rows="100", cols="20")
+        try: worksheet = sh.worksheet("Cache_Dados")
+        except: worksheet = sh.add_worksheet(title="Cache_Dados", rows="100", cols="20")
         
-        # 4. Prepara Dados e Salva
         worksheet.clear()
-        
         agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         worksheet.update('A1', [['Atualizado em', 'Patrimonio', 'Investido'], [agora, float(patrimonio), float(investido)]])
         
+        # Salva Tabela
         df_export = df[['Ativo', 'Tipo', 'Preço Atual', 'Valor Atual', 'P/VP', 'DY (12m)', 'Setor']].copy()
         df_export = df_export.fillna(0)
         dados_lista = [df_export.columns.values.tolist()] + df_export.values.tolist()
-        
         worksheet.update('A4', dados_lista)
         
-        return True, f"✅ Dados salvos com sucesso às {agora}!"
-        
-    except Exception as e:
-        return False, f"❌ Erro Técnico: {str(e)}"
+        return True, f"✅ Dados sincronizados com sucesso às {agora}"
+    except Exception as e: return False, f"❌ Erro ao salvar: {str(e)}"
 
+# --- INTERFACE IA ---
 @st.dialog("🤖 Análise Inteligente", width="large")
 def modal_analise(ativo, tipo_analise, **kwargs):
     st.empty()
@@ -281,7 +293,7 @@ def fmt(valor, prefix="R$ ", is_pct=False):
     if st.session_state.get('privacy_mode'): return "••••••"
     return pct_br(valor) if is_pct else real_br(valor)
 
-# --- APP ---
+# --- APP LAYOUT ---
 c1, c2 = st.columns([6, 1])
 with c1: st.markdown("## 💠 Carteira Pro")
 with c2: 
@@ -312,14 +324,16 @@ if not df.empty:
     fiis_total = df[df["Tipo"]=="FII"]["Valor Atual"].sum()
     cls_val = "pos" if val_rs >= 0 else "neg"; sinal = "+" if val_rs >= 0 else ""
 
-    # AUTO-SAVE NO CARREGAMENTO
+    # AUTO-SAVE NO CARREGAMENTO (Uma vez por sessão)
     if 'dados_salvos' not in st.session_state:
         with st.spinner("Sincronizando dados com o Robô..."):
             sucesso, msg = salvar_snapshot_google(df, patr, investido)
             if sucesso:
                 st.session_state['dados_salvos'] = True
                 st.toast("✅ Dados atualizados na nuvem!", icon="☁️")
-            else: st.error(f"Falha Auto-Save: {msg}")
+            else: 
+                # Não mostra erro fatal, apenas um aviso discreto
+                print(f"Erro Auto-Save: {msg}") 
 
     # TERMÔMETRO
     perc_lib = renda / meta_renda if meta_renda > 0 else 0
@@ -427,7 +441,7 @@ if not df.empty:
         if not df_ag.empty: st.dataframe(df_ag, column_config={"Link": st.column_config.LinkColumn("🔗")}, use_container_width=True)
         else: st.info("Nenhuma data encontrada.")
 
-    with t5: # HISTÓRICO
+    with t5: # HISTÓRICO CORRIGIDO (Indentação Arrumada)
         st.subheader("📈 Rentabilidade Relativa")
         ativos = df[df["Tipo"].isin(["FII", "Ação"])]["Ativo"].tolist()
         if ativos:
@@ -439,4 +453,6 @@ if not df.empty:
                 with st.spinner("..."):
                     hist = obter_historico(sel, per, bench)
                 if not hist.empty: st.line_chart((hist/hist.iloc[0]-1)*100)
+        else:
+            st.info("Carregando...") # Agora este else está alinhado corretamente com o if ativos
 else: st.info("Carregando...")
