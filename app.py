@@ -368,7 +368,7 @@ if not df.empty:
     
     st.write("") # Espaçamento
 
-# --- CARDS KPI (6 Cards agora) ---
+    # --- CARDS KPI (6 Cards agora) ---
     custo_inflacao = renda_nominal - renda_real_disponivel
     
     st.markdown(f"""<div class="kpi-grid">
