@@ -9,6 +9,8 @@ import yfinance as yf
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from youtubesearchpython import VideosSearch
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # ==========================================
 # ⚙️ CONFIGURAÇÃO
@@ -48,37 +50,15 @@ except:
 # --- CSS REFINADO ---
 st.markdown("""
 <style>
-    /* Grid */
     .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px; }
+    .kpi-card { background-color: var(--background-secondary-color); border: 1px solid rgba(128, 128, 128, 0.1); border-radius: 16px; padding: 24px 16px; text-align: center; box-shadow: 0 4px 6px -2px rgba(0, 0, 0, 0.05); height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; }
     
-    /* Cards KPI */
-    .kpi-card { background-color: var(--background-secondary-color); border: 1px solid rgba(128, 128, 128, 0.1); border-radius: 16px; padding: 24px 16px; text-align: center; box-shadow: 0 4px 6px -2px rgba(0, 0, 0, 0.05); height: 100%; display: flex; flex-direction: column; justify-content: center; }
-    
-    /* CARD OPORTUNIDADE (Visual Limpo para integrar com botão) */
-    .opp-card {
-        background: linear-gradient(135deg, rgba(20, 184, 166, 0.05) 0%, rgba(16, 185, 129, 0.1) 100%);
-        border: 1px solid rgba(20, 184, 166, 0.3);
-        border-radius: 16px; /* Borda arredondada completa */
-        padding: 16px;
-        text-align: center;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        height: 100%;
-        display: flex; flex-direction: column; justify-content: space-between;
-        margin-bottom: 10px; /* Espaço para o botão abaixo */
+    .opp-card, .alert-card {
+        border: 1px solid rgba(0,0,0,0.1); border-radius: 16px; padding: 16px; text-align: center; height: 100%;
+        display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;
     }
-    
-    /* CARD ALERTA */
-    .alert-card {
-        background: linear-gradient(135deg, rgba(255, 87, 34, 0.05) 0%, rgba(255, 152, 0, 0.1) 100%);
-        border: 1px solid rgba(255, 87, 34, 0.3);
-        border-radius: 16px;
-        padding: 16px;
-        text-align: center;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        height: 100%;
-        display: flex; flex-direction: column; justify-content: space-between;
-        margin-bottom: 10px;
-    }
+    .opp-card { background: linear-gradient(135deg, rgba(20, 184, 166, 0.05) 0%, rgba(16, 185, 129, 0.1) 100%); border-color: rgba(20, 184, 166, 0.3); }
+    .alert-card { background: linear-gradient(135deg, rgba(255, 87, 34, 0.05) 0%, rgba(255, 152, 0, 0.1) 100%); border-color: rgba(255, 87, 34, 0.3); }
 
     .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 8px; }
     .card-ticker { font-size: 1.4rem; font-weight: 800; color: #333; }
@@ -89,19 +69,18 @@ st.markdown("""
     .card-label { font-size: 0.65rem; color: #666; text-transform: uppercase; margin-bottom: 2px; }
     .card-val { font-weight: 700; color: #333; font-size: 0.9rem; }
     
-    /* Footer Informativo (Tag visual apenas) */
     .opp-footer { margin-top: 12px; background-color: #ccfbf1; color: #0f766e; padding: 6px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; }
     .alert-footer { margin-top: 12px; background-color: #ffccbc; color: #bf360c; padding: 6px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; }
+    
+    .link-btn { display: block; width: 100%; text-decoration: none; background-color: #fff; border: 1px solid #ccc; color: #555; padding: 6px 0; border-radius: 8px; font-size: 0.8rem; font-weight: 600; transition: all 0.2s; cursor: pointer; text-align: center; }
+    .link-btn:hover { background-color: #eee; }
 
     .kpi-label { font-size: 0.75rem; opacity: 0.7; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
     .kpi-value { font-size: 1.7rem; font-weight: 700; color: var(--text-color); margin-bottom: 5px; }
     .kpi-delta { font-size: 0.75rem; font-weight: 600; padding: 4px 12px; border-radius: 20px; display: inline-block; }
     .pos { color: #065f46; background-color: #d1fae5; } .neg { color: #991b1b; background-color: #fee2e2; } .neu { color: #374151; background-color: #f3f4f6; }
     
-    /* Botões Full Width */
     .stButton button { width: 100%; border-radius: 10px; font-weight: 600; height: 40px; }
-    
-    /* Barra de Progresso */
     .stProgress > div > div > div > div { background-color: #0f766e; }
 </style>
 """, unsafe_allow_html=True)
@@ -110,7 +89,7 @@ st.markdown("""
 def real_br(valor): return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if isinstance(valor, (int, float)) else valor
 def pct_br(valor): return f"{valor:.2%}".replace(".", ",") if isinstance(valor, (int, float)) else valor
 def to_f(x): 
-    try: return float(str(x).replace("R$","").replace("%","").replace(" ", "").replace(".","").replace(",", ".")) if pd.notna(x) else 0.0
+    try: return float(str(x).replace("R$","").replace("%","").replace(" ", "").replace(".", "").replace(",", ".")) if pd.notna(x) else 0.0
     except: return 0.0
 
 @st.cache_data(ttl=86400)
@@ -140,25 +119,18 @@ def get_stock_price(ticker):
 @st.cache_data(ttl=3600)
 def obter_historico(tickers, periodo="6mo", benchmark="^BVSP"):
     if not tickers: return pd.DataFrame()
-    # Adiciona Benchmark
     tickers_sa = [f"{t}.SA" if not t.endswith(".SA") else t for t in tickers]
-    
-    # Define o ticker do benchmark
     bench_ticker = "^BVSP" if benchmark == "IBOV" else "IFIX.SA"
     tickers_sa.append(bench_ticker)
-    
     try:
         dados = yf.download(tickers_sa, period=periodo, progress=False)['Close']
         if isinstance(dados, pd.Series): dados = dados.to_frame(); dados.columns = tickers_sa
-        
-        # Limpeza de nomes
         cols_new = []
         for c in dados.columns:
             if c == "^BVSP": cols_new.append("IBOVESPA")
             elif c == "IFIX.SA": cols_new.append("IFIX")
             else: cols_new.append(c.replace(".SA", ""))
         dados.columns = cols_new
-        
         dados.dropna(axis=1, how='all', inplace=True)
         return dados
     except: return pd.DataFrame()
@@ -187,15 +159,11 @@ def carregar_tudo():
                 qtd = to_f(row[COL_QTD])
                 if qtd > 0:
                     dy_calc = to_f(row[COL_DY]) / 100 if to_f(row[COL_DY]) > 2.0 else to_f(row[COL_DY])
-                    
-                    # Leitura SEGURA da coluna Setor
                     try:
                         setor = str(row[COL_SETOR]).strip()
                         if setor == "" or setor.lower() == "nan": setor = "Indefinido"
                     except: setor = "Indefinido"
-                    
-                    try:
-                        data_com = str(row[COL_DATA_COM]).strip()
+                    try: data_com = str(row[COL_DATA_COM]).strip()
                     except: data_com = "-"
                     
                     dados.append({
@@ -251,14 +219,29 @@ def carregar_tudo():
     df["% Carteira"] = df["Valor Atual"] / df["Valor Atual"].sum() if df["Valor Atual"].sum() > 0 else 0.0
     return df
 
+def salvar_snapshot_google(df, patrimonio, investido):
+    try:
+        creds_json = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+        scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
+        client = gspread.authorize(creds)
+        sh = client.open_by_url(st.secrets["SHEET_URL_FIIS"]) 
+        try: worksheet = sh.worksheet("Cache_Dados")
+        except: worksheet = sh.add_worksheet(title="Cache_Dados", rows="100", cols="20")
+        
+        worksheet.clear()
+        agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        worksheet.update('A1', [['Atualizado em', 'Patrimonio', 'Investido'], [agora, float(patrimonio), float(investido)]])
+        df_export = df[['Ativo', 'Tipo', 'Preço Atual', 'Valor Atual', 'P/VP', 'DY (12m)', 'Setor']].copy()
+        dados_lista = [df_export.columns.values.tolist()] + df_export.values.tolist()
+        worksheet.update('A4', dados_lista)
+        return True, f"✅ Dados sincronizados às {agora}"
+    except Exception as e: return False, f"❌ Erro ao salvar: {str(e)}"
+
 @st.dialog("🤖 Análise Inteligente", width="large")
 def modal_analise(ativo, tipo_analise, **kwargs):
     st.empty()
-    if tipo_analise == "compra":
-        prompt = f"Analise FII **{ativo}** para COMPRA.\nPreço R$ {kwargs['preco']:.2f} | P/VP {kwargs['pvp']:.2f} | DY {kwargs['dy']:.1%}.\n1.Perfil/Gestão\n2.Risco/Alavancagem\n3.Valuation\n4.Veredito(Compra/Aguarda)."
-    else:
-        prompt = f"Analise VENDA FII **{ativo}**.\nPM R$ {kwargs['pm']:.2f} | Preço R$ {kwargs['preco']:.2f} | P/VP {kwargs['pvp']:.2f} | DY {kwargs['dy']:.1%}.\nMotivo: {kwargs['motivo']}.\n1.Diagnóstico\n2.Dilema\n3.Veredito."
-
+    prompt = f"Analise {ativo}. {kwargs}"
     if not HAS_AI: st.error("Sem API Key"); return
     with st.spinner(f"Analisando {ativo}..."):
         try:
@@ -304,14 +287,22 @@ with st.sidebar:
     st.caption(f"IPCA (12m): **{ipca_atual:.2%}** (BCB)")
     
     st.divider()
-    if not df.empty and st.button("✨ IA Geral", type="primary", use_container_width=True):
-        pass # Placeholder
+    if not df.empty and st.button("✨ IA Geral", type="primary", use_container_width=True): pass
 
 if not df.empty:
     patr = df["Valor Atual"].sum(); renda = df["Renda Mensal"].sum(); investido = df["Total Investido"].sum()
     val_rs = patr - investido; val_pct = val_rs / investido if investido > 0 else 0
     fiis_total = df[df["Tipo"]=="FII"]["Valor Atual"].sum()
     cls_val = "pos" if val_rs >= 0 else "neg"; sinal = "+" if val_rs >= 0 else ""
+
+    # AUTO-SAVE NO CARREGAMENTO
+    if 'dados_salvos' not in st.session_state:
+        with st.spinner("Sincronizando dados com o Robô..."):
+            sucesso, msg = salvar_snapshot_google(df, patr, investido)
+            if sucesso:
+                st.session_state['dados_salvos'] = True
+                st.toast("✅ Dados atualizados na nuvem!", icon="☁️")
+            else: st.error(f"Falha Auto-Save: {msg}")
 
     # TERMÔMETRO
     perc_lib = renda / meta_renda if meta_renda > 0 else 0
@@ -332,7 +323,7 @@ if not df.empty:
         <div class="kpi-card"><div class="kpi-label">FIIs</div><div class="kpi-value">{fmt(fiis_total)}</div><div class="kpi-delta neu">{fmt(fiis_total/patr if patr>0 else 0, "", True)} Carteira</div></div>
     </div>""", unsafe_allow_html=True)
 
-    # --- OPORTUNIDADES ---
+    # OPORTUNIDADES
     media_peso = df["% Carteira"].mean(); media_dy = df["DY (12m)"].mean()
     df_opp = df[(df["Tipo"]=="FII") & (df["P/VP"]>=0.8) & (df["P/VP"]<=0.9) & (df["DY (12m)"]>0.10) & (df["% Carteira"]<media_peso)].sort_values("P/VP").head(4)
     
@@ -340,15 +331,10 @@ if not df.empty:
         st.subheader("🎯 Oportunidades")
         cols = st.columns(len(df_opp))
         for idx, row in enumerate(df_opp.itertuples(index=False)):
-            # Recalcula variáveis com segurança (usando iloc no dataframe filtrado)
-            ativo = df_opp.iloc[idx]["Ativo"]
-            preco = df_opp.iloc[idx]["Preço Atual"]
-            pvp = df_opp.iloc[idx]["P/VP"]
-            dy = df_opp.iloc[idx]["DY (12m)"]
-            peso = df_opp.iloc[idx]["% Carteira"]
-            valor_tem = df_opp.iloc[idx]["Valor Atual"]
-            falta = (patr * media_peso) - valor_tem
-            link = df_opp.iloc[idx]["Link"]
+            ativo = df_opp.iloc[idx]["Ativo"]; preco = df_opp.iloc[idx]["Preço Atual"]
+            pvp = df_opp.iloc[idx]["P/VP"]; dy = df_opp.iloc[idx]["DY (12m)"]
+            peso = df_opp.iloc[idx]["% Carteira"]; valor_tem = df_opp.iloc[idx]["Valor Atual"]
+            falta = (patr * media_peso) - valor_tem; link = df_opp.iloc[idx]["Link"]
 
             with cols[idx]:
                 st.markdown(f"""<div class="opp-card"><div class="card-header"><div class="card-ticker green-t">{ativo}</div><div class="opp-price">{real_br(preco)}</div></div>
@@ -356,29 +342,21 @@ if not df.empty:
                 <div class="card-item"><div class="card-label">PESO</div><div class="card-val">{pct_br(peso)}</div></div><div class="card-item"><div class="card-label">TENHO</div><div class="card-val">{real_br(valor_tem)}</div></div></div>
                 <div class="opp-footer">Meta Média: {pct_br(media_peso)} <br>Aporte Sugerido: {real_br(max(0, falta))}</div>
                 <a href="{link}" target="_blank" class="link-btn">🌐 Ver Detalhes</a></div>""", unsafe_allow_html=True)
-                
-                # Botão IA Full Width
                 if st.button(f"✨ Analisar {ativo}", key=f"opp_{ativo}", use_container_width=True): 
                     modal_analise(ativo, "compra", preco=preco, pvp=pvp, dy=dy)
         st.divider()
 
-    # --- ALERTAS DE SAÍDA ---
+    # ALERTAS
     df_alert = df[(df["Tipo"]=="FII") & ((df["P/VP"]>1.1) | (df["DY (12m)"]<(media_dy*0.85)) | ((df["P/VP"]<0.7) & (df["DY (12m)"]<0.08)))].head(4)
     if not df_alert.empty and not st.session_state.get('privacy_mode'):
         st.subheader("⚠️ Radar de Atenção")
         cols = st.columns(len(df_alert))
         for idx, row in enumerate(df_alert.itertuples(index=False)):
-            # Recalcula variáveis
-            ativo = df_alert.iloc[idx]["Ativo"]
-            preco = df_alert.iloc[idx]["Preço Atual"]
-            pm = df_alert.iloc[idx]["Preço Médio"]
-            pvp = df_alert.iloc[idx]["P/VP"]
-            dy = df_alert.iloc[idx]["DY (12m)"]
-            peso = df_alert.iloc[idx]["% Carteira"]
-            valor_tem = df_alert.iloc[idx]["Valor Atual"]
-            link = df_alert.iloc[idx]["Link"]
+            ativo = df_alert.iloc[idx]["Ativo"]; preco = df_alert.iloc[idx]["Preço Atual"]
+            pm = df_alert.iloc[idx]["Preço Médio"]; pvp = df_alert.iloc[idx]["P/VP"]
+            dy = df_alert.iloc[idx]["DY (12m)"]; peso = df_alert.iloc[idx]["% Carteira"]
+            valor_tem = df_alert.iloc[idx]["Valor Atual"]; link = df_alert.iloc[idx]["Link"]
             
-            # Motivo
             mots = []
             if pvp > 1.1: mots.append("Caro")
             if dy < (media_dy*0.85): mots.append("Baixo Yield")
@@ -392,33 +370,30 @@ if not df.empty:
                 <div class="card-item" style="grid-column: span 2;"><div class="card-label">TENHO (R$)</div><div class="card-val">{real_br(valor_tem)}</div></div></div>
                 <div class="alert-footer" style="background:white; border:1px solid #ffccbc; color:#bf360c;">🚨 {motivo_txt}</div>
                 <a href="{link}" target="_blank" class="link-btn">🌐 Ver Detalhes</a></div>""", unsafe_allow_html=True)
-                
-                # Botão IA Full Width
                 if st.button(f"🔍 Diagnóstico", key=f"alert_{ativo}", use_container_width=True): 
                     modal_analise(ativo, "venda", preco=preco, pm=pm, pvp=pvp, dy=dy, motivo=motivo_txt)
         st.divider()
 
-    # --- ABAS ---
+    # ABAS
     t1, t2, t3, t4, t5 = st.tabs(["📊 Visão Setorial", "🎯 Matriz & Radar", "📋 Inventário", "📅 Agenda", "📈 Histórico"])
 
-    with t1: # GRÁFICO SETORIAL CORRIGIDO
+    with t1: # GRÁFICO SETORIAL
         c1, c2 = st.columns(2)
         with c1:
-            fig = px.sunburst(df, path=['Tipo', 'Setor', 'Ativo'], values='Valor Atual', color='Setor', title="Diversificação (Baseado na Planilha)")
+            fig = px.sunburst(df, path=['Tipo', 'Setor', 'Ativo'], values='Valor Atual', color='Setor', title="Diversificação por Setor")
             st.plotly_chart(fig, use_container_width=True)
         with c2:
             top_s = df.groupby("Setor")["Valor Atual"].sum().sort_values(ascending=False).reset_index()
             fig2 = px.bar(top_s, x="Valor Atual", y="Setor", orientation='h', title="Exposição por Setor")
             st.plotly_chart(fig2, use_container_width=True)
 
-    with t2: # MATRIZ + TABELA DESCONTOS (HEATMAP CORRIGIDO)
+    with t2: # MATRIZ + TABELA
         st.subheader("Matriz de Valor (FIIs)")
         df_fii = df[(df["Tipo"]=="FII") & (df["P/VP"]>0)].copy()
         if not df_fii.empty:
             fig = px.scatter(df_fii, x="P/VP", y="DY (12m)", size="Valor Atual", color="Ativo", text="Ativo", template="plotly_white")
             fig.add_shape(type="rect", x0=0, y0=media_dy, x1=1.0, y1=df_fii["DY (12m)"].max()*1.1, fillcolor="rgba(0, 200, 83, 0.1)", line=dict(width=0), layer="below")
             fig.add_vline(x=1.0, line_dash="dot", line_color="gray"); st.plotly_chart(fig, use_container_width=True)
-        
         st.divider(); st.subheader("🔥 Melhores Descontos")
         df_radar = df[(df["Tipo"]=="FII") & (df["P/VP"]<1.0) & (df["P/VP"]>0.1)].copy()
         if not df_radar.empty:
@@ -431,14 +406,11 @@ if not df.empty:
 
     with t4: # AGENDA
         st.subheader("📅 Status dos Dividendos (Data Com)")
-        # Filtra apenas quem tem Data Com preenchida
         df_ag = df[(df["Tipo"]=="FII") & (df["Data Com"] != "-")][["Ativo", "Data Com", "Link"]].copy()
-        if not df_ag.empty:
-            st.dataframe(df_ag, column_config={"Link": st.column_config.LinkColumn("🔗")}, use_container_width=True)
-        else:
-            st.info("Nenhuma data 'Data Com' encontrada na coluna 19 da planilha.")
+        if not df_ag.empty: st.dataframe(df_ag, column_config={"Link": st.column_config.LinkColumn("🔗")}, use_container_width=True)
+        else: st.info("Nenhuma data encontrada.")
 
-    with t5: # HISTÓRICO COM SELETOR
+    with t5: # HISTÓRICO
         st.subheader("📈 Rentabilidade Relativa")
         ativos = df[df["Tipo"].isin(["FII", "Ação"])]["Ativo"].tolist()
         if ativos:

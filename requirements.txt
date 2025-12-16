@@ -11,3 +11,6 @@ tabulate
 numpy
 yfinance
 youtube-search-python
+gspread
+oauth2client
+google-generativeai
