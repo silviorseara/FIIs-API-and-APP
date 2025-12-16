@@ -227,21 +227,10 @@ def salvar_snapshot_google(df, patrimonio, investido):
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
         client = gspread.authorize(creds)
         
-        # 2. Abre Planilha (ESTRATÉGIA ROBUSTA: URL ou ID)
-        sh = None
-        url_planilha = st.secrets["SHEET_URL_FIIS"]
-        
-        try:
-            # Tentativa 1: Abrir direto pela URL
-            sh = client.open_by_url(url_planilha)
-        except Exception as e_url:
-            # Tentativa 2: Extrair o ID e abrir pela chave (caso a URL falhe)
-            try:
-                # O ID fica entre /d/ e /edit
-                sheet_id = url_planilha.split("/d/")[1].split("/")[0]
-                sh = client.open_by_key(sheet_id)
-            except Exception as e_id:
-                return False, f"❌ Erro ao abrir planilha. Verifique compartilhamento. Detalhe: {str(e_url)} | {str(e_id)}"
+        # 2. Abre a Planilha pelo ID (Infalível)
+        # Certifique-se de ter adicionado SHEET_ID no secrets.toml
+        sheet_id = st.secrets["SHEET_ID"]
+        sh = client.open_by_key(sheet_id) 
 
         # 3. Seleciona ou Cria a Aba
         try:
@@ -253,13 +242,10 @@ def salvar_snapshot_google(df, patrimonio, investido):
         worksheet.clear()
         
         agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        # Salva Totais na linha 1 e 2
         worksheet.update('A1', [['Atualizado em', 'Patrimonio', 'Investido'], [agora, float(patrimonio), float(investido)]])
         
-        # Salva Tabela na linha 4
-        # Converte tipos numpy para tipos nativos do Python (evita erro de JSON)
         df_export = df[['Ativo', 'Tipo', 'Preço Atual', 'Valor Atual', 'P/VP', 'DY (12m)', 'Setor']].copy()
-        df_export = df_export.fillna(0) # Remove NaNs
+        df_export = df_export.fillna(0)
         dados_lista = [df_export.columns.values.tolist()] + df_export.values.tolist()
         
         worksheet.update('A4', dados_lista)
@@ -267,7 +253,7 @@ def salvar_snapshot_google(df, patrimonio, investido):
         return True, f"✅ Dados salvos com sucesso às {agora}!"
         
     except Exception as e:
-        return False, f"❌ Erro Crítico ao Salvar: {str(e)}"
+        return False, f"❌ Erro Técnico: {str(e)}"
 
 @st.dialog("🤖 Análise Inteligente", width="large")
 def modal_analise(ativo, tipo_analise, **kwargs):
