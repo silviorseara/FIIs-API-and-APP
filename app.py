@@ -419,17 +419,21 @@ if not df.empty:
 
     # OPORTUNIDADES
     media_peso = df["% Carteira"].mean(); media_dy = df["DY (12m)"].mean()
-    df_opp = df[(df["Tipo"]=="FII") & (df["P/VP"]>=0.8) & (df["P/VP"]<=0.9) & (df["DY (12m)"]>0.10) & (df["% Carteira"]<media_peso)].sort_values("P/VP").head(4)
+    df_opp = df[(df["Tipo"]=="FII") & (df["P/VP"]>=0.8) & (df["P/VP"]<=0.9) & (df["DY (12m)"]>0.10) & (df["% Carteira"]<media_peso)].copy()
+    if not df_opp.empty:
+        df_opp["AporteSugerido"] = np.maximum(0, (patr * media_peso) - df_opp["Valor Atual"])
+        df_opp = df_opp[df_opp["AporteSugerido"] >= 1000]
+        df_opp = df_opp.sort_values(by=["P/VP", "DY (12m)", "AporteSugerido"], ascending=[True, False, False]).head(4)
     
     if not df_opp.empty and not st.session_state.get('privacy_mode'):
         st.subheader("🎯 Oportunidades")
         cols = st.columns(len(df_opp))
-        for idx, row in enumerate(df_opp.itertuples(index=False)):
-            ativo = df_opp.iloc[idx]["Ativo"]; preco = df_opp.iloc[idx]["Preço Atual"]
-            pvp = df_opp.iloc[idx]["P/VP"]; dy = df_opp.iloc[idx]["DY (12m)"]
-            peso = df_opp.iloc[idx]["% Carteira"]; valor_tem = df_opp.iloc[idx]["Valor Atual"]
-            falta = (patr * media_peso) - valor_tem; link = df_opp.iloc[idx]["Link"]
-            setor = df_opp.iloc[idx]["Setor"] # <--- NOVA VARIÁVEL
+        for idx, (_, row) in enumerate(df_opp.iterrows()):
+            ativo = row["Ativo"]; preco = row["Preço Atual"]
+            pvp = row["P/VP"]; dy = row["DY (12m)"]
+            peso = row["% Carteira"]; valor_tem = row["Valor Atual"]
+            falta = row["AporteSugerido"]; link = row["Link"]
+            setor = row["Setor"] # <--- NOVA VARIÁVEL
 
             with cols[idx]:
                 # AQUI ABAIXO: Adicionei uma div envolvendo Ticker e Setor
@@ -447,7 +451,7 @@ if not df.empty:
                         <div class="card-item"><div class="card-label">PESO</div><div class="card-val">{pct_br(peso)}</div></div>
                         <div class="card-item"><div class="card-label">TENHO</div><div class="card-val">{real_br(valor_tem)}</div></div>
                     </div>
-                    <div class="opp-footer">Meta Média: {pct_br(media_peso)} <br>Aporte Sugerido: {real_br(max(0, falta))}</div>
+                    <div class="opp-footer">Meta Média: {pct_br(media_peso)} <br>Aporte Sugerido: {real_br(falta)}</div>
                     <a href="{link}" target="_blank" class="link-btn">🌐 Ver Detalhes</a>
                 </div>""", unsafe_allow_html=True)
                 
@@ -456,22 +460,33 @@ if not df.empty:
         st.divider()
 
     # ALERTAS
-    df_alert = df[(df["Tipo"]=="FII") & ((df["P/VP"]>1.1) | (df["DY (12m)"]<(media_dy*0.85)) | ((df["P/VP"]<0.7) & (df["DY (12m)"]<0.08)))].head(4)
+    df_alert = df[(df["Tipo"]=="FII") & ((df["P/VP"]>1.1) | (df["DY (12m)"]<(media_dy*0.85)) | ((df["P/VP"]<0.7) & (df["DY (12m)"]<0.08)))].copy()
+    if not df_alert.empty:
+        def _classificar_risco(row):
+            motivos = []
+            if row["P/VP"] > 1.1: motivos.append("Caro")
+            if row["DY (12m)"] < (media_dy * 0.85): motivos.append("Baixo Yield")
+            if row["P/VP"] < 0.7 and row["DY (12m)"] < 0.08: motivos.append("Armadilha")
+            if "Baixo Yield" in motivos and "Armadilha" in motivos:
+                risco_ordem = 0; risco_txt = "Baixo Yield + Armadilha"
+            elif "Baixo Yield" in motivos:
+                risco_ordem = 1; risco_txt = "Baixo Yield"
+            else:
+                risco_ordem = 2; risco_txt = " + ".join(motivos) if motivos else "Observação"
+            return pd.Series({"MotivoTexto": " + ".join(motivos) if motivos else "Observação", "RiscoOrdem": risco_ordem, "EtiquetaRisco": risco_txt})
+
+        df_alert[["MotivoTexto", "RiscoOrdem", "EtiquetaRisco"]] = df_alert.apply(_classificar_risco, axis=1)
+        df_alert = df_alert.sort_values(by=["Valor Atual", "RiscoOrdem"], ascending=[False, True]).head(4)
     if not df_alert.empty and not st.session_state.get('privacy_mode'):
         st.subheader("⚠️ Radar de Atenção")
         cols = st.columns(len(df_alert))
-        for idx, row in enumerate(df_alert.itertuples(index=False)):
-            ativo = df_alert.iloc[idx]["Ativo"]; preco = df_alert.iloc[idx]["Preço Atual"]
-            pm = df_alert.iloc[idx]["Preço Médio"]; pvp = df_alert.iloc[idx]["P/VP"]
-            dy = df_alert.iloc[idx]["DY (12m)"]; peso = df_alert.iloc[idx]["% Carteira"]
-            valor_tem = df_alert.iloc[idx]["Valor Atual"]; link = df_alert.iloc[idx]["Link"]
-            setor = df_alert.iloc[idx]["Setor"] # <--- NOVA VARIÁVEL
-            
-            mots = []
-            if pvp > 1.1: mots.append("Caro")
-            if dy < (media_dy*0.85): mots.append("Baixo Yield")
-            if pvp < 0.7 and dy < 0.08: mots.append("Armadilha?")
-            motivo_txt = " + ".join(mots)
+        for idx, (_, row) in enumerate(df_alert.iterrows()):
+            ativo = row["Ativo"]; preco = row["Preço Atual"]
+            pm = row["Preço Médio"]; pvp = row["P/VP"]
+            dy = row["DY (12m)"]; peso = row["% Carteira"]
+            valor_tem = row["Valor Atual"]; link = row["Link"]
+            setor = row["Setor"] # <--- NOVA VARIÁVEL
+            motivo_txt = row["MotivoTexto"]
 
             with cols[idx]:
                 # AQUI ABAIXO: Mesma alteração no Header
