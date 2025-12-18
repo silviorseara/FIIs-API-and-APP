@@ -1,11 +1,14 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import re
 import requests
 import json
 import numpy as np
 import yfinance as yf
+import calendar
+from pandas.tseries.offsets import BDay, MonthEnd
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from youtubesearchpython import VideosSearch
@@ -220,6 +223,103 @@ def carregar_tudo():
     df["% Carteira"] = df["Valor Atual"] / df["Valor Atual"].sum() if df["Valor Atual"].sum() > 0 else 0.0
     return df
 
+MESES_PT = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+
+def resolver_data_com(valor, referencia=None):
+    if referencia is None:
+        referencia = datetime.now()
+    if pd.isna(valor):
+        return None
+    texto = str(valor).strip()
+    if not texto or texto == "-":
+        return None
+    texto_upper = texto.upper()
+
+    for fmt in ("%d/%m/%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(texto, fmt)
+        except ValueError:
+            continue
+
+    if re.match(r"^\d{1,2}/\d{1,2}$", texto):
+        try:
+            dia, mes = map(int, texto.split("/"))
+            ano = referencia.year
+            dt = datetime(ano, mes, dia)
+            if dt.date() < referencia.date():
+                dt = datetime(ano + 1, mes, dia)
+            return dt
+        except ValueError:
+            return None
+
+    ano_ref, mes_ref = referencia.year, referencia.month
+    base_mes = pd.Timestamp(ano_ref, mes_ref, 1)
+
+    match = re.match(r"(\d{1,2})º DIA ÚTIL", texto_upper)
+    if match:
+        try:
+            pos = int(match.group(1))
+            if pos <= 0:
+                return None
+            dt = (base_mes + BDay(pos - 1)).to_pydatetime()
+            return dt
+        except Exception:
+            return None
+
+    if "ÚLTIMO DIA ÚTIL" in texto_upper:
+        dt = (base_mes + MonthEnd(0)).to_pydatetime()
+        while dt.weekday() >= 5:
+            dt = dt - timedelta(days=1)
+        return dt
+
+    return None
+
+def gerar_calendario_dividendos(mapa_dividendos, referencia):
+    cal = calendar.Calendar(firstweekday=0)
+    semanas = cal.monthdayscalendar(referencia.year, referencia.month)
+    dias_semana = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+    dados_z = []
+    dados_texto = []
+
+    for semana in semanas:
+        linha_valores = []
+        linha_textos = []
+        for dia in semana:
+            if dia == 0:
+                linha_valores.append(None)
+                linha_textos.append("")
+            else:
+                data_atual = datetime(referencia.year, referencia.month, dia).date()
+                total = mapa_dividendos.get(data_atual, 0.0)
+                linha_valores.append(total if total > 0 else 0.0)
+                linha_textos.append(f"{dia}\n{real_br(total)}" if total > 0 else str(dia))
+        dados_z.append(linha_valores)
+        dados_texto.append(linha_textos)
+
+    fig = go.Figure(data=go.Heatmap(
+        z=dados_z,
+        x=dias_semana,
+        y=[f"Semana {idx + 1}" for idx in range(len(dados_z))],
+        text=dados_texto,
+        hoverinfo="text",
+        colorscale="YlGnBu",
+        xgap=2,
+        ygap=2,
+        showscale=False,
+        zmin=0
+    ))
+
+    titulo_mes = f"{MESES_PT[referencia.month]} / {referencia.year}" if 1 <= referencia.month <= 12 else referencia.strftime("%m/%Y")
+
+    fig.update_layout(
+        title=f"Calendário de Dividendos - {titulo_mes}",
+        yaxis=dict(autorange="reversed", showgrid=False, zeroline=False),
+        xaxis=dict(showgrid=False, zeroline=False),
+        height=260,
+        margin=dict(l=10, r=10, t=60, b=10)
+    )
+    return fig
+
 # --- SALVAMENTO (COM CORREÇÃO DE ERRO JSON) ---
 def salvar_snapshot_google(df, patrimonio, investido):
     try:
@@ -419,7 +519,7 @@ if not df.empty:
 
     # OPORTUNIDADES
     media_peso = df["% Carteira"].mean(); media_dy = df["DY (12m)"].mean()
-    df_opp = df[(df["Tipo"]=="FII") & (df["P/VP"]>=0.8) & (df["P/VP"]<=0.9) & (df["DY (12m)"]>0.10) & (df["% Carteira"]<media_peso)].copy()
+    df_opp = df[(df["Tipo"]=="FII") & (df["P/VP"]>=0.8) & (df["P/VP"]<=0.9) & (df["DY (12m)"]>=0.12) & (df["% Carteira"]<media_peso)].copy()
     if not df_opp.empty:
         df_opp["AporteSugerido"] = np.maximum(0, (patr * media_peso) - df_opp["Valor Atual"])
         df_opp = df_opp[df_opp["AporteSugerido"] >= 1000]
@@ -536,18 +636,123 @@ if not df.empty:
         st.divider(); st.subheader("🔥 Melhores Descontos")
         df_radar = df[(df["Tipo"]=="FII") & (df["P/VP"]<1.0) & (df["P/VP"]>0.1)].copy()
         if not df_radar.empty:
-            st.dataframe(df_radar.sort_values("P/VP")[["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"]].style.format({"Preço Atual": real_br, "Valor Atual": real_br, "P/VP": "{:.2f}", "DY (12m)": pct_br, "% Carteira": pct_br}).background_gradient(subset=["P/VP"], cmap="RdYlGn_r").background_gradient(subset=["DY (12m)"], cmap="Greens"), use_container_width=True)
+            cols_descontos = ["Ativo", "Preço Atual", "P/VP", "DY (12m)", "Valor Atual", "% Carteira"]
+            tabela_descontos = df_radar.sort_values("P/VP")[cols_descontos]
+            st.dataframe(
+                tabela_descontos
+                .style
+                .format({"Preço Atual": real_br, "Valor Atual": real_br, "P/VP": "{:.2f}", "DY (12m)": pct_br, "% Carteira": pct_br})
+                .background_gradient(subset=["P/VP"], cmap="RdYlGn_r")
+                .background_gradient(subset=["DY (12m)"], cmap="Greens")
+                .background_gradient(subset=["% Carteira"], cmap="Blues"),
+                use_container_width=True
+            )
 
     with t3: # INVENTÁRIO
         cols_show = ["Link", "Ativo", "Setor", "Preço Médio", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"]
         df_inv = df[[c for c in cols_show if c in df.columns]].copy()
-        st.dataframe(df_inv.style.format({"Preço Médio": real_br, "Preço Atual": real_br, "Valor Atual": real_br, "Renda Mensal": real_br, "Qtd": "{:.0f}", "Var %": pct_br, "DY (12m)": pct_br, "% Carteira": pct_br}).background_gradient(subset=["Var %"], cmap="RdYlGn", vmin=-0.5, vmax=0.5).background_gradient(subset=["DY (12m)"], cmap="Greens"), column_config={"Link": st.column_config.LinkColumn("🔗"), "% Carteira": st.column_config.ProgressColumn("Peso")}, height=600)
+        if "Link" in df_inv.columns:
+            df_inv["Ficha"] = df_inv["Link"]
+            df_inv.drop(columns=["Link"], inplace=True)
+        else:
+            df_inv["Ficha"] = None
+        ordem_cols = ["Ficha", "Ativo", "Setor", "Preço Médio", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"]
+        df_inv = df_inv[[c for c in ordem_cols if c in df_inv.columns]]
+        st.dataframe(
+            df_inv.style
+            .format({"Preço Médio": real_br, "Preço Atual": real_br, "Valor Atual": real_br, "Renda Mensal": real_br, "Qtd": "{:.0f}", "Var %": pct_br, "DY (12m)": pct_br, "% Carteira": pct_br})
+            .background_gradient(subset=["Var %"], cmap="RdYlGn", vmin=-0.5, vmax=0.5)
+            .background_gradient(subset=["DY (12m)"], cmap="Greens"),
+            column_config={
+                "Ficha": st.column_config.LinkColumn(" ", display_text="🔗", help="Abrir detalhes do ativo"),
+                "% Carteira": st.column_config.ProgressColumn("Peso")
+            },
+            height=600
+        )
 
     with t4: # AGENDA
         st.subheader("📅 Status dos Dividendos (Data Com)")
-        df_ag = df[(df["Tipo"]=="FII") & (df["Data Com"] != "-")][["Ativo", "Data Com", "Link"]].copy()
-        if not df_ag.empty: st.dataframe(df_ag, column_config={"Link": st.column_config.LinkColumn("🔗")}, use_container_width=True)
-        else: st.info("Nenhuma data encontrada.")
+        df_ag = df[(df["Tipo"]=="FII") & (df["Data Com"] != "-")][["Ativo", "Data Com", "Link", "Renda Mensal"]].copy()
+        if df_ag.empty:
+            st.info("Nenhuma data encontrada.")
+        else:
+            hoje = datetime.now()
+            df_ag["Data Prevista"] = df_ag["Data Com"].apply(lambda x: resolver_data_com(x, hoje))
+            df_ag.dropna(subset=["Data Prevista"], inplace=True)
+            if df_ag.empty:
+                st.info("Não foi possível estimar as datas de corte para os registros atuais.")
+            else:
+                df_ag["Data Prevista"] = pd.to_datetime(df_ag["Data Prevista"])
+                df_ag["Dividendo Estimado"] = df_ag["Renda Mensal"].fillna(0.0)
+                df_ag["Ficha"] = df_ag["Link"]
+                df_ag["Status"] = np.where(df_ag["Data Prevista"].dt.date <= hoje.date(), "Já ocorreu", "Próxima")
+                df_ag["Mês"] = df_ag["Data Prevista"].dt.to_period("M")
+
+                meses_disponiveis = sorted(df_ag["Mês"].unique())
+                mes_atual = pd.Period(hoje, freq="M")
+                mes_default = mes_atual if mes_atual in meses_disponiveis else meses_disponiveis[0]
+                mes_escolhido = st.selectbox(
+                    "Mês de referência",
+                    options=meses_disponiveis,
+                    index=meses_disponiveis.index(mes_default) if mes_default in meses_disponiveis else 0,
+                    format_func=lambda p: f"{MESES_PT[p.month]} / {p.year}"
+                )
+
+                ref_data = datetime(mes_escolhido.year, mes_escolhido.month, 1)
+                df_ag_mes = df_ag[df_ag["Mês"] == mes_escolhido].copy().sort_values("Data Prevista")
+                if df_ag_mes.empty:
+                    st.info("Sem eventos para o mês selecionado.")
+                else:
+                    total_mes = df_ag_mes["Dividendo Estimado"].sum()
+                    if mes_escolhido == mes_atual:
+                        total_passado = df_ag_mes[df_ag_mes["Data Prevista"].dt.date <= hoje.date()]["Dividendo Estimado"].sum()
+                    else:
+                        total_passado = 0.0
+                    total_pendente = total_mes - total_passado
+
+                    c_met1, c_met2, c_met3 = st.columns(3)
+                    c_met1.metric("Previsto no mês", real_br(total_mes))
+                    c_met2.metric("Já passou", real_br(total_passado))
+                    c_met3.metric("Ainda por vir", real_br(max(total_pendente, 0.0)))
+
+                    st.markdown("### 🗓️ Calendário do mês")
+                    mapa_dividendos = df_ag_mes.groupby(df_ag_mes["Data Prevista"].dt.date)["Dividendo Estimado"].sum().to_dict()
+                    st.plotly_chart(gerar_calendario_dividendos(mapa_dividendos, ref_data), use_container_width=True)
+
+                    st.markdown("### 📌 Agenda detalhada")
+                    agenda_view = df_ag_mes[["Ativo", "Data Com", "Data Prevista", "Status", "Dividendo Estimado", "Ficha"]].copy()
+                    agenda_view["Data Prevista"] = agenda_view["Data Prevista"].dt.date
+                    st.dataframe(
+                        agenda_view,
+                        column_config={
+                            "Data Prevista": st.column_config.DateColumn("Data Com"),
+                            "Dividendo Estimado": st.column_config.NumberColumn("Dividendo Estimado", format="R$ %.2f"),
+                            "Ficha": st.column_config.LinkColumn(" ", display_text="🔗", help="Abrir detalhes do ativo")
+                        },
+                        use_container_width=True
+                    )
+
+                    st.markdown("### 📅 Totais por data")
+                    df_tot_data = df_ag_mes.groupby("Data Prevista")["Dividendo Estimado"].sum().reset_index()
+                    df_tot_data["Data Prevista"] = df_tot_data["Data Prevista"].dt.date
+                    st.dataframe(
+                        df_tot_data,
+                        column_config={
+                            "Data Prevista": st.column_config.DateColumn("Data"),
+                            "Dividendo Estimado": st.column_config.NumberColumn("Total", format="R$ %.2f")
+                        },
+                        use_container_width=True
+                    )
+
+                    st.markdown("### 💸 Totais por ativo")
+                    df_tot_ativo = df_ag_mes.groupby("Ativo")["Dividendo Estimado"].sum().reset_index().sort_values("Dividendo Estimado", ascending=False)
+                    st.dataframe(
+                        df_tot_ativo,
+                        column_config={
+                            "Dividendo Estimado": st.column_config.NumberColumn("Total", format="R$ %.2f")
+                        },
+                        use_container_width=True
+                    )
 
     with t5: # HISTÓRICO
         st.subheader("📈 Rentabilidade Relativa")
