@@ -576,6 +576,9 @@ if not df.empty:
     val_rs = patr - investido
     val_pct = val_rs / investido if investido > 0 else 0
     fiis_total = df[df["Tipo"]=="FII"]["Valor Atual"].sum()
+    acoes_total = df[df["Tipo"]=="Ação"]["Valor Atual"].sum()
+    renda_variavel_total = fiis_total + acoes_total
+    outros_total = max(patr - renda_variavel_total, 0.0)
     cls_val = "pos" if val_rs >= 0 else "neg"; sinal = "+" if val_rs >= 0 else ""
 
     # --- AUTO-SAVE (Mantedo sua lógica) ---
@@ -614,7 +617,8 @@ if not df.empty:
 
 # --- CÁLCULO DAS VARIÁVEIS ---
     custo_inflacao = renda_nominal - renda_real_disponivel
-    perc_fiis = fiis_total/patr if patr > 0 else 0
+    perc_renda_variavel = renda_variavel_total/patr if patr > 0 else 0
+    perc_outros = outros_total/patr if patr > 0 else 0
     selic_delta = selic_utilizada - selic_atual
     if abs(selic_delta) < 1e-6:
         selic_delta_txt = "Oficial"
@@ -658,9 +662,15 @@ if not df.empty:
 </div>
 
 <div class="kpi-card">
-<div class="kpi-label">FIIs</div>
-<div class="kpi-value">{fmt(fiis_total)}</div>
-<div class="kpi-delta neu">{fmt(perc_fiis, "", True)} Carteira</div>
+<div class="kpi-label">Renda Variável</div>
+<div class="kpi-value">{fmt(renda_variavel_total)}</div>
+<div class="kpi-delta neu">{fmt(perc_renda_variavel, "", True)} Carteira</div>
+</div>
+
+<div class="kpi-card">
+<div class="kpi-label">Outros Ativos</div>
+<div class="kpi-value">{fmt(outros_total)}</div>
+<div class="kpi-delta neu">{fmt(perc_outros, "", True)} Carteira</div>
 </div>
 
 <div class="kpi-card">
