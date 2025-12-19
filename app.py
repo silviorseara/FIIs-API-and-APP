@@ -278,7 +278,8 @@ PERIODOS_EVOLUCAO = {
     "3 meses": ("3mo", 140),
     "6 meses": ("6mo", 220),
     "1 ano": ("1y", 400),
-    "2 anos": ("2y", 800)
+    "2 anos": ("2y", 800),
+    "5 anos": ("5y", 1300)
 }
 
 TIJOLO_KEYWORDS = [
