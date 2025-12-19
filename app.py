@@ -577,8 +577,19 @@ def fmt(valor, prefix="R$ ", is_pct=False):
 def _hash_password(valor):
     return hashlib.sha256(valor.encode("utf-8")).hexdigest()
 
+def _carregar_credenciais():
+    dados = st.secrets.get("AUTH_USERS")
+    if not dados:
+        return {}
+    if isinstance(dados, dict):
+        return dados
+    try:
+        return {chave: dados[chave] for chave in dados}
+    except Exception:
+        return {}
+
 def _credenciais_validas(usuario, senha):
-    credenciais = st.secrets.get("AUTH_USERS")
+    credenciais = _carregar_credenciais()
     if not credenciais:
         return False
     segredo = credenciais.get(usuario)
@@ -591,7 +602,7 @@ def _credenciais_validas(usuario, senha):
     return senha == segredo_str or senha_hash == segredo_str
 
 def garantir_login():
-    credenciais = st.secrets.get("AUTH_USERS")
+    credenciais = _carregar_credenciais()
     if not credenciais:
         st.error("Erro: configure AUTH_USERS no secrets.toml para controlar o acesso.")
         st.stop()
