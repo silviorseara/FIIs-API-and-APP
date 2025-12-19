@@ -139,6 +139,24 @@ def get_selic_meta():
         pass
     return 0.12
 
+@st.cache_data(ttl=86400)
+def get_cdi_series(dias=260):
+    try:
+        url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.4389/dados/ultimos/{dias}?formato=json"
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            df = pd.DataFrame(resp.json())
+            if not df.empty and "data" in df.columns and "valor" in df.columns:
+                df["data"] = pd.to_datetime(df["data"], dayfirst=True)
+                df["valor"] = pd.to_numeric(df["valor"], errors="coerce") / 100
+                df.dropna(subset=["valor"], inplace=True)
+                df.sort_values("data", inplace=True)
+                df["acum"] = (1 + df["valor"]).cumprod()
+                return df[["data", "acum"]]
+    except Exception:
+        pass
+    return pd.DataFrame()
+
 @st.cache_data(ttl=300)
 def get_stock_price(ticker):
     try:
@@ -256,6 +274,13 @@ def carregar_tudo():
 
 MESES_PT = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
 
+PERIODOS_EVOLUCAO = {
+    "3 meses": ("3mo", 140),
+    "6 meses": ("6mo", 220),
+    "1 ano": ("1y", 400),
+    "2 anos": ("2y", 800)
+}
+
 TIJOLO_KEYWORDS = [
     "TIJOLO", "LOGIST", "SHOP", "LAJE", "CORPORAT", "RESID", "HOSPITAL", "HOTEL", "EDUC", "AGRO", "IMOBILIARIO URB",
     "RENDA URB", "DESENV", "MULTIPROPRI", "HÍBRID", "HIBRID", "INDUSTR"
@@ -367,6 +392,121 @@ def gerar_calendario_dividendos(mapa_dividendos, referencia):
         height=260,
         margin=dict(l=10, r=10, t=60, b=10)
     )
+    return fig
+
+def gerar_grafico_evolucao(df_base, periodo_label, benchmarks):
+    if df_base.empty:
+        return None
+
+    periodo_cfg = PERIODOS_EVOLUCAO.get(periodo_label, ("6mo", 220))
+    periodo_yf, dias_cdi = periodo_cfg
+
+    posicoes = df_base[df_base["Tipo"].isin(["FII", "Ação"])]
+    if posicoes.empty:
+        return None
+
+    quantidades = posicoes.groupby("Ativo")["Qtd"].sum()
+    tickers = sorted(quantidades.index.tolist())
+    if not tickers:
+        return None
+
+    simbolos_mapa = {}
+    simbolos_yf = []
+    for ticker in tickers:
+        simbolo = ticker if ticker.endswith(".SA") else f"{ticker}.SA"
+        simbolos_mapa[simbolo] = ticker
+        if simbolo not in simbolos_yf:
+            simbolos_yf.append(simbolo)
+
+    bench_map = {}
+    for bench in benchmarks:
+        if bench == "Ibovespa":
+            bench_map[bench] = "^BVSP"
+        elif bench == "IFIX":
+            bench_map[bench] = "IFIX.SA"
+
+    simbolos_download = simbolos_yf + [s for s in bench_map.values() if s not in simbolos_yf]
+    if not simbolos_download:
+        return None
+
+    try:
+        dados = yf.download(simbolos_download, period=periodo_yf, progress=False)["Close"]
+    except Exception:
+        return None
+
+    if isinstance(dados, pd.Series):
+        dados = dados.to_frame()
+    if dados.empty:
+        return None
+
+    rename_map = {**simbolos_mapa, **{sym: nome for nome, sym in bench_map.items()}}
+    dados = dados.rename(columns=rename_map)
+    dados.replace([np.inf, -np.inf], np.nan, inplace=True)
+    dados.sort_index(inplace=True)
+
+    componentes = []
+    for ticker, qtd in quantidades.items():
+        if ticker in dados.columns:
+            serie = dados[ticker].copy().fillna(method="ffill").fillna(method="bfill")
+            componentes.append(serie * qtd)
+
+    if not componentes:
+        return None
+
+    carteira_series = pd.concat(componentes, axis=1).sum(axis=1).replace([np.inf, -np.inf], np.nan).dropna()
+    if carteira_series.empty:
+        return None
+
+    plot_df = pd.DataFrame(index=carteira_series.index)
+    plot_df["Carteira"] = carteira_series
+
+    for bench_nome in bench_map.keys():
+        if bench_nome in dados.columns:
+            serie_bench = dados[bench_nome].reindex(plot_df.index).fillna(method="ffill").dropna()
+            if not serie_bench.empty:
+                plot_df[bench_nome] = serie_bench
+
+    if "CDI" in benchmarks:
+        cdi_df = get_cdi_series(dias_cdi)
+        if not cdi_df.empty:
+            cdi_series = cdi_df.set_index("data")["acum"].reindex(plot_df.index, method="ffill").dropna()
+            if not cdi_series.empty:
+                plot_df["CDI"] = cdi_series
+
+    plot_df.dropna(how="all", inplace=True)
+    if plot_df.empty:
+        return None
+
+    plot_norm = pd.DataFrame(index=plot_df.index)
+    for coluna in plot_df.columns:
+        serie = plot_df[coluna].copy().fillna(method="ffill")
+        serie.dropna(inplace=True)
+        if serie.empty:
+            continue
+        base = serie.iloc[0]
+        if base == 0:
+            continue
+        normalizada = (serie / base - 1) * 100
+        normalizada = normalizada.reindex(plot_df.index).fillna(method="ffill")
+        plot_norm[coluna] = normalizada
+
+    if plot_norm.empty:
+        return None
+
+    fig = go.Figure()
+    for coluna in plot_norm.columns:
+        fig.add_trace(go.Scatter(x=plot_norm.index, y=plot_norm[coluna], mode="lines", name=coluna))
+
+    fig.update_layout(
+        height=360,
+        margin=dict(l=10, r=10, t=40, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        hovermode="x unified",
+        yaxis_title="Variação (%)",
+        xaxis_title="Data"
+    )
+    fig.update_yaxes(ticksuffix="%", showgrid=True, zeroline=True)
+    fig.update_traces(hovertemplate="%{y:.1f}%")
     return fig
 
 # --- SALVAMENTO (COM CORREÇÃO DE ERRO JSON) ---
@@ -654,7 +794,9 @@ if not df.empty:
 <div class="kpi-value" style="color:#065f46;">{fmt(renda_nominal)}</div>
 <div class="kpi-delta pos">Recebido</div>
 </div>
+</div>
 
+<div class="kpi-grid">
 <div class="kpi-card" style="background-color: #fff1f2; border: 1px solid rgba(225, 29, 72, 0.3);">
 <div class="kpi-label" style="color:#be123c; font-weight:700;">Renda Real</div>
 <div class="kpi-value" style="color:#9f1239;">{fmt(renda_real_disponivel)}</div>
@@ -683,6 +825,22 @@ if not df.empty:
 
     # --- RENDERIZAÇÃO ---
     st.markdown(html_kpi, unsafe_allow_html=True)
+
+    st.markdown("### 📈 Evolução da Carteira")
+    st.caption("Compare a performance acumulada da carteira com indicadores de referência.")
+    col_hist1, col_hist2 = st.columns([1, 1])
+    periodos_opcoes = list(PERIODOS_EVOLUCAO.keys())
+    with col_hist1:
+        periodo_evolucao = st.selectbox("Período", periodos_opcoes, index=periodos_opcoes.index("6 meses") if "6 meses" in periodos_opcoes else 0)
+    benchmarks_opcoes = ["CDI", "Ibovespa", "IFIX"]
+    padrao_bench = [b for b in ["CDI", "IFIX"] if b in benchmarks_opcoes]
+    with col_hist2:
+        benchmarks_escolhidos = st.multiselect("Benchmark(s)", benchmarks_opcoes, default=padrao_bench)
+    fig_evolucao = gerar_grafico_evolucao(df, periodo_evolucao, benchmarks_escolhidos)
+    if fig_evolucao is not None:
+        st.plotly_chart(fig_evolucao, use_container_width=True)
+    else:
+        st.info("Não foi possível montar a evolução da carteira para os parâmetros selecionados.")
 
     # OPORTUNIDADES
     media_peso = df["% Carteira"].mean(); media_dy = df["DY (12m)"].mean()
