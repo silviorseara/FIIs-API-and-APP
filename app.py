@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import re
 import requests
 import json
+import hashlib
 import numpy as np
 import yfinance as yf
 import calendar
@@ -573,7 +574,56 @@ def fmt(valor, prefix="R$ ", is_pct=False):
     if st.session_state.get('privacy_mode'): return "••••••"
     return pct_br(valor) if is_pct else real_br(valor)
 
+def _hash_password(valor):
+    return hashlib.sha256(valor.encode("utf-8")).hexdigest()
+
+def _credenciais_validas(usuario, senha):
+    credenciais = st.secrets.get("AUTH_USERS")
+    if not credenciais:
+        return False
+    segredo = credenciais.get(usuario)
+    if segredo is None:
+        return False
+    segredo_str = str(segredo).strip()
+    senha_hash = _hash_password(senha)
+    if segredo_str.startswith("sha256:"):
+        return senha_hash == segredo_str.split(":", 1)[1]
+    return senha == segredo_str or senha_hash == segredo_str
+
+def garantir_login():
+    credenciais = st.secrets.get("AUTH_USERS")
+    if not credenciais:
+        st.error("Erro: configure AUTH_USERS no secrets.toml para controlar o acesso.")
+        st.stop()
+
+    if st.session_state.get("auth_user"):
+        with st.sidebar:
+            st.caption(f"👤 Sessão ativa: **{st.session_state['auth_user']}**")
+            if st.button("Sair", key="logout_btn", use_container_width=True):
+                st.session_state.pop("auth_user", None)
+                st.session_state.pop("dados_salvos", None)
+                st.rerun()
+        return
+
+    login_box = st.container()
+    with login_box:
+        st.markdown("### 🔐 Acesso restrito")
+        st.caption("Informe usuário e senha cadastrados para abrir o painel.")
+        with st.form("login_form"):
+            usuario = st.text_input("Usuário")
+            senha = st.text_input("Senha", type="password")
+            entrar = st.form_submit_button("Entrar", use_container_width=True)
+        if entrar:
+            if _credenciais_validas(usuario, senha):
+                st.session_state["auth_user"] = usuario
+                st.success("Login efetuado com sucesso.")
+                st.rerun()
+            else:
+                st.error("Credenciais inválidas. Tente novamente.")
+    st.stop()
+
 # --- APP ---
+garantir_login()
 c1, c2 = st.columns([6, 1])
 with c1: st.markdown("## 💠 Carteira Pro")
 with c2: 
