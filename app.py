@@ -6,6 +6,7 @@ import re
 import requests
 import json
 import hashlib
+from typing import Optional, Tuple
 import numpy as np
 import yfinance as yf
 import calendar
@@ -205,7 +206,7 @@ def carregar_tudo():
     dados = []
     # 1. FIIs
     try:
-        df_fiis = pd.read_csv(URL_FIIS, header=None)
+        df_fiis = ler_planilha(URL_FIIS, has_header=False)
         for index, row in df_fiis.iterrows():
             try:
                 raw = str(row[COL_TICKER]).strip().upper()
@@ -231,9 +232,10 @@ def carregar_tudo():
 
     # 2. Manual
     try:
-        df_man = pd.read_csv(URL_MANUAL)
+        df_man = ler_planilha(URL_MANUAL, has_header=True)
         if len(df_man.columns) >= 4:
-            df_man = df_man.iloc[:, :4]; df_man.columns = ["Ativo", "Tipo", "Qtd", "Valor"]
+            df_man = df_man.iloc[:, :4]
+            df_man.columns = ["Ativo", "Tipo", "Qtd", "Valor"]
             for index, row in df_man.iterrows():
                 try:
                     ativo = str(row["Ativo"]).strip().upper()
@@ -611,6 +613,70 @@ def _carregar_credenciais():
         if cred_map:
             return cred_map
     return {}
+
+def _extrair_sheet_info(url: str) -> Tuple[Optional[str], Optional[int]]:
+    if not url:
+        return None, None
+    sheet_id = None
+    if "/d/" in url:
+        try:
+            sheet_id = url.split("/d/")[1].split("/")[0]
+        except Exception:
+            sheet_id = None
+    if sheet_id is None:
+        sheet_id = url
+    gid = None
+    match = re.search(r"gid=(\d+)", url)
+    if match:
+        try:
+            gid = int(match.group(1))
+        except Exception:
+            gid = None
+    return sheet_id, gid
+
+@st.cache_resource
+def _get_gspread_client():
+    try:
+        creds_json = json.loads(st.secrets["GOOGLE_CREDENTIALS"], strict=False)
+    except KeyError as exc:
+        raise RuntimeError("GOOGLE_CREDENTIALS não configurado nos secrets.") from exc
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
+    return gspread.authorize(creds)
+
+def _carregar_worksheet(url: str):
+    sheet_id, gid = _extrair_sheet_info(url)
+    if not sheet_id:
+        return None
+    client = _get_gspread_client()
+    sh = client.open_by_key(sheet_id)
+    if gid is not None:
+        try:
+            return sh.get_worksheet_by_id(gid)
+        except Exception:
+            pass
+    try:
+        return sh.sheet1
+    except Exception:
+        return None
+
+def ler_planilha(url: str, has_header: bool = False) -> pd.DataFrame:
+    worksheet = _carregar_worksheet(url)
+    if worksheet is None:
+        return pd.DataFrame()
+    valores = worksheet.get_all_values()
+    if not valores:
+        return pd.DataFrame()
+    df = pd.DataFrame(valores)
+    if has_header and not df.empty:
+        df.columns = df.iloc[0]
+        df = df.drop(df.index[0])
+    return df.reset_index(drop=True)
 
 def _credenciais_validas(usuario, senha):
     credenciais = _carregar_credenciais()
