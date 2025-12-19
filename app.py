@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from youtubesearchpython import VideosSearch
 import gspread
+from gspread.exceptions import APIError, WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
 
 # ==========================================
@@ -654,23 +655,48 @@ def _carregar_worksheet(url: str):
     if not sheet_id:
         return None
     client = _get_gspread_client()
-    sh = client.open_by_key(sheet_id)
+    try:
+        sh = client.open_by_key(sheet_id)
+    except APIError as exc:
+        st.error("Acesso negado à planilha principal. Compartilhe o arquivo com o e-mail do service account.")
+        st.stop()
+    except Exception as exc:
+        st.error(f"Não foi possível abrir a planilha (ID {sheet_id}). Detalhes: {exc}")
+        st.stop()
+
     if gid is not None:
         try:
             return sh.get_worksheet_by_id(gid)
-        except Exception:
-            pass
+        except WorksheetNotFound:
+            st.warning("A aba especificada não foi encontrada; exibindo a primeira aba disponível.")
+        except APIError as exc:
+            st.error("Sem permissão para ler a aba selecionada. Verifique o compartilhamento.")
+            st.stop()
+        except Exception as exc:
+            st.error(f"Falha ao acessar a aba solicitada: {exc}")
+            st.stop()
     try:
         return sh.sheet1
-    except Exception:
-        return None
+    except Exception as exc:
+        st.error(f"Não foi possível obter a primeira aba da planilha: {exc}")
+        st.stop()
 
 def ler_planilha(url: str, has_header: bool = False) -> pd.DataFrame:
     worksheet = _carregar_worksheet(url)
     if worksheet is None:
+        st.error("Não foi possível localizar a worksheet alvo.")
         return pd.DataFrame()
-    valores = worksheet.get_all_values()
+    try:
+        valores = worksheet.get_all_values()
+    except APIError as exc:
+        st.error("Sem permissão para ler os dados; confirme o compartilhamento com o service account.")
+        return pd.DataFrame()
+    except Exception as exc:
+        st.error(f"Erro ao ler os dados da planilha: {exc}")
+        return pd.DataFrame()
+
     if not valores:
+        st.warning("A planilha está vazia.")
         return pd.DataFrame()
     df = pd.DataFrame(valores)
     if has_header and not df.empty:
