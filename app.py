@@ -439,6 +439,8 @@ with c2:
     if st.button("↻ Atualizar"): st.cache_data.clear(); st.rerun()
 
 df = carregar_tudo()
+if not df.empty:
+    df["Segmento"] = df["Setor"].apply(lambda x: "Tijolo" if setor_eh_tijolo(x) else "Papéis")
 
 with st.sidebar:
     st.header("Ferramentas")
@@ -638,6 +640,7 @@ if not df.empty:
             peso = row["% Carteira"]; valor_tem = row["Valor Atual"]
             falta = row["AporteSugerido"]; link = row["Link"]
             setor = row["Setor"] # <--- NOVA VARIÁVEL
+            segmento = "Tijolo" if setor_eh_tijolo(setor) else "Papéis"
 
             with cols[idx]:
                 # AQUI ABAIXO: Adicionei uma div envolvendo Ticker e Setor
@@ -645,7 +648,7 @@ if not df.empty:
                     <div class="card-header">
                         <div>
                             <div class="card-ticker green-t">{ativo}</div>
-                            <div class="card-sector">{setor}</div>
+                            <div class="card-sector">{setor} • {segmento}</div>
                         </div>
                         <div class="opp-price">{real_br(preco)}</div>
                     </div>
@@ -698,6 +701,7 @@ if not df.empty:
             dy = row["DY (12m)"]; peso = row["% Carteira"]
             valor_tem = row["Valor Atual"]; link = row["Link"]
             setor = row["Setor"] # <--- NOVA VARIÁVEL
+            segmento = "Tijolo" if setor_eh_tijolo(setor) else "Papéis"
             motivo_txt = row["MotivoTexto"]
 
             with cols[idx]:
@@ -706,7 +710,7 @@ if not df.empty:
                     <div class="card-header">
                         <div>
                             <div class="card-ticker red-t">{ativo}</div>
-                            <div class="card-sector">{setor}</div>
+                            <div class="card-sector">{setor} • {segmento}</div>
                         </div>
                         <div class="opp-price">{real_br(preco)}</div>
                     </div>
@@ -761,14 +765,14 @@ if not df.empty:
             )
 
     with t3: # INVENTÁRIO
-        cols_show = ["Link", "Ativo", "Setor", "Preço Médio", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"]
+        cols_show = ["Link", "Ativo", "Segmento", "Setor", "Preço Médio", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"]
         df_inv = df[[c for c in cols_show if c in df.columns]].copy()
         if "Link" in df_inv.columns:
             df_inv["Ficha"] = df_inv["Link"]
             df_inv.drop(columns=["Link"], inplace=True)
         else:
             df_inv["Ficha"] = None
-        ordem_cols = ["Ficha", "Ativo", "Setor", "Preço Médio", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"]
+        ordem_cols = ["Ficha", "Ativo", "Segmento", "Setor", "Preço Médio", "Preço Atual", "Qtd", "Valor Atual", "Var %", "DY (12m)", "% Carteira", "Renda Mensal"]
         df_inv = df_inv[[c for c in ordem_cols if c in df_inv.columns]]
         st.dataframe(
             df_inv.style
