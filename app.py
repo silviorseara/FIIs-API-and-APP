@@ -583,10 +583,34 @@ def _carregar_credenciais():
         return {}
     if isinstance(dados, dict):
         return dados
+    if isinstance(dados, str):
+        try:
+            parsed = json.loads(dados)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {}
+    if hasattr(dados, "items"):
+        try:
+            return dict(dados.items())
+        except Exception:
+            pass
     try:
-        return {chave: dados[chave] for chave in dados}
+        convertido = dict(dados)
+        if isinstance(convertido, dict):
+            return convertido
     except Exception:
-        return {}
+        pass
+    if isinstance(dados, (list, tuple)):
+        cred_map = {}
+        for item in dados:
+            if isinstance(item, dict):
+                cred_map.update(item)
+            elif isinstance(item, (list, tuple)) and len(item) == 2:
+                cred_map[str(item[0])] = item[1]
+        if cred_map:
+            return cred_map
+    return {}
 
 def _credenciais_validas(usuario, senha):
     credenciais = _carregar_credenciais()
