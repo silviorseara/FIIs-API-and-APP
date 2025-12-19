@@ -621,7 +621,10 @@ def _extrair_sheet_info(url: str) -> Tuple[Optional[str], Optional[int]]:
     sheet_id = None
     if "/d/" in url:
         try:
-            sheet_id = url.split("/d/")[1].split("/")[0]
+            parte = url.split("/d/")[1]
+            if parte.startswith("e/"):
+                parte = parte.split("/", 2)[1] if "/" in parte[2:] else parte[2:]
+            sheet_id = parte.split("/")[0]
         except Exception:
             sheet_id = None
     if sheet_id is None:
