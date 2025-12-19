@@ -8,6 +8,7 @@ import json
 import numpy as np
 import yfinance as yf
 import calendar
+import unicodedata
 from pandas.tseries.offsets import BDay, MonthEnd
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
@@ -107,6 +108,18 @@ def get_ipca_acumulado_12m():
             return acumulado - 1
     except: pass
     return 0.045
+
+@st.cache_data(ttl=86400)
+def get_selic_meta():
+    try:
+        url = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json"
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            dados = resp.json()
+            if dados:
+                return float(dados[0]["valor"]) / 100
+    except: pass
+    return 0.12
 
 @st.cache_data(ttl=300)
 def get_stock_price(ticker):
@@ -224,6 +237,24 @@ def carregar_tudo():
     return df
 
 MESES_PT = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+
+TIJOLO_KEYWORDS = [
+    "TIJOLO", "LOGIST", "SHOP", "LAJE", "CORPORAT", "RESID", "HOSPITAL", "HOTEL", "EDUC", "AGRO", "IMOBILIARIO URB",
+    "RENDA URB", "DESENV", "MULTIPROPRI", "HÍBRID", "HIBRID", "INDUSTR"
+]
+
+def normalizar_setor(setor):
+    if not setor:
+        return ""
+    texto = unicodedata.normalize('NFD', str(setor))
+    texto = ''.join(ch for ch in texto if unicodedata.category(ch) != 'Mn')
+    return texto.upper().strip()
+
+def setor_eh_tijolo(setor):
+    norm = normalizar_setor(setor)
+    if not norm:
+        return False
+    return any(chave in norm for chave in TIJOLO_KEYWORDS)
 
 def resolver_data_com(valor, referencia=None):
     if referencia is None:
@@ -402,8 +433,11 @@ with st.sidebar:
     meta_renda = st.number_input("Meta Renda (R$)", value=10000, step=500)
     
     if 'ipca_cache' not in st.session_state: st.session_state['ipca_cache'] = get_ipca_acumulado_12m()
+    if 'selic_cache' not in st.session_state: st.session_state['selic_cache'] = get_selic_meta()
     ipca_atual = st.session_state['ipca_cache']
+    selic_atual = st.session_state['selic_cache']
     st.caption(f"IPCA (12m): **{ipca_atual:.2%}** (BCB)")
+    st.caption(f"SELIC Meta: **{selic_atual:.2%}** (BCB)")
     
     st.divider()
     if not df.empty and st.button("✨ IA Geral", type="primary", use_container_width=True): pass
@@ -562,10 +596,18 @@ if not df.empty:
     # ALERTAS
     df_alert = df[(df["Tipo"]=="FII") & ((df["P/VP"]>1.1) | (df["DY (12m)"]<(media_dy*0.85)) | ((df["P/VP"]<0.7) & (df["DY (12m)"]<0.08)))].copy()
     if not df_alert.empty:
+        selic_limite = selic_atual if 'selic_atual' in locals() else get_selic_meta()
+
         def _classificar_risco(row):
             motivos = []
             if row["P/VP"] > 1.1: motivos.append("Caro")
-            if row["DY (12m)"] < (media_dy * 0.85): motivos.append("Baixo Yield")
+            threshold_yield = media_dy * 0.85
+            if selic_limite > 0:
+                if setor_eh_tijolo(row.get("Setor", "")):
+                    threshold_yield = max(threshold_yield, selic_limite * 0.60)
+                else:
+                    threshold_yield = max(threshold_yield, selic_limite * 0.80)
+            if row["DY (12m)"] < threshold_yield: motivos.append("Baixo Yield")
             if row["P/VP"] < 0.7 and row["DY (12m)"] < 0.08: motivos.append("Armadilha")
             if "Baixo Yield" in motivos and "Armadilha" in motivos:
                 risco_ordem = 0; risco_txt = "Baixo Yield + Armadilha"
