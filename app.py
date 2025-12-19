@@ -455,7 +455,45 @@ with st.sidebar:
     ipca_atual = st.session_state['ipca_cache']
     selic_atual = st.session_state['selic_cache']
     st.caption(f"IPCA (12m): **{ipca_atual:.2%}** (BCB)")
-    st.caption(f"SELIC Meta: **{selic_atual:.2%}** (BCB)")
+    st.caption(f"SELIC oficial: **{selic_atual:.2%}** (fonte automática)")
+
+    params_defaults = {
+        "selic_custom": selic_atual,
+        "opp_pvp_min": 0.80,
+        "opp_pvp_max": 0.90,
+        "opp_dy_min": 0.12,
+        "opp_aporte_min": 1000.0,
+        "radar_tijolo_pct": 0.60,
+        "radar_outros_pct": 0.80,
+    }
+    if 'user_params' not in st.session_state: st.session_state['user_params'] = params_defaults.copy()
+    else:
+        for chave, val in params_defaults.items():
+            st.session_state['user_params'].setdefault(chave, val)
+    params = st.session_state['user_params']
+
+    st.divider()
+    st.subheader("⚙️ Parâmetros")
+    selic_input = st.number_input("SELIC utilizada (%)", value=float(params['selic_custom'] * 100), step=0.25, min_value=0.0, max_value=100.0)
+    params['selic_custom'] = selic_input / 100 if selic_input else 0.0
+
+    with st.expander("Filtros de oportunidades"):
+        c_op1, c_op2 = st.columns(2)
+        params['opp_pvp_min'] = c_op1.number_input("P/VP mínimo", value=float(params['opp_pvp_min']), min_value=0.0, max_value=2.0, step=0.05)
+        params['opp_pvp_max'] = c_op2.number_input("P/VP máximo", value=float(params['opp_pvp_max']), min_value=0.0, max_value=2.0, step=0.05)
+        if params['opp_pvp_max'] < params['opp_pvp_min']:
+            params['opp_pvp_max'] = params['opp_pvp_min']
+        c_op3, c_op4 = st.columns(2)
+        dy_min_input = c_op3.number_input("DY mínimo (%)", value=float(params['opp_dy_min'] * 100), min_value=0.0, max_value=100.0, step=0.25)
+        params['opp_dy_min'] = dy_min_input / 100 if dy_min_input else 0.0
+        params['opp_aporte_min'] = c_op4.number_input("Aporte mínimo (R$)", value=float(params['opp_aporte_min']), min_value=0.0, step=100.0)
+
+    with st.expander("Critérios do radar"):
+        c_rd1, c_rd2 = st.columns(2)
+        tijolo_pct_input = c_rd1.number_input("Tijolo: % da SELIC", value=float(params['radar_tijolo_pct'] * 100), min_value=0.0, max_value=100.0, step=5.0)
+        outros_pct_input = c_rd2.number_input("Outros: % da SELIC", value=float(params['radar_outros_pct'] * 100), min_value=0.0, max_value=100.0, step=5.0)
+        params['radar_tijolo_pct'] = tijolo_pct_input / 100 if tijolo_pct_input else 0.0
+        params['radar_outros_pct'] = outros_pct_input / 100 if outros_pct_input else 0.0
     
     st.divider()
     if not df.empty and st.button("✨ IA Geral", type="primary", use_container_width=True): pass
@@ -464,6 +502,7 @@ if not df.empty:
     patr = df["Valor Atual"].sum()
     renda_nominal = df["Renda Mensal"].sum()
     investido = df["Total Investido"].sum()
+    selic_utilizada = params['selic_custom'] if params.get('selic_custom', 0) > 0 else selic_atual
     
     # --- CÁLCULO DA REALIDADE (Ajuste de Inflação) ---
     # 1. Converter IPCA anual para mensal (Juros Compostos)
@@ -523,6 +562,13 @@ if not df.empty:
 # --- CÁLCULO DAS VARIÁVEIS ---
     custo_inflacao = renda_nominal - renda_real_disponivel
     perc_fiis = fiis_total/patr if patr > 0 else 0
+    selic_delta = selic_utilizada - selic_atual
+    if abs(selic_delta) < 1e-6:
+        selic_delta_txt = "Oficial"
+        selic_delta_cls = "neu"
+    else:
+        selic_delta_txt = f"{'+' if selic_delta > 0 else ''}{pct_br(selic_delta)} vs oficial"
+        selic_delta_cls = "pos" if selic_delta > 0 else "neg"
 
     # --- MONTAGEM DO HTML (SEM ESPAÇOS NA ESQUERDA) ---
     # Nota: O texto abaixo deve ficar encostado na margem esquerda do editor
@@ -563,6 +609,12 @@ if not df.empty:
 <div class="kpi-value">{fmt(fiis_total)}</div>
 <div class="kpi-delta neu">{fmt(perc_fiis, "", True)} Carteira</div>
 </div>
+
+<div class="kpi-card">
+<div class="kpi-label">SELIC Utilizada</div>
+<div class="kpi-value">{pct_br(selic_utilizada)}</div>
+<div class="kpi-delta {selic_delta_cls}">{selic_delta_txt}</div>
+</div>
 </div>
 """
 
@@ -571,10 +623,10 @@ if not df.empty:
 
     # OPORTUNIDADES
     media_peso = df["% Carteira"].mean(); media_dy = df["DY (12m)"].mean()
-    df_opp = df[(df["Tipo"]=="FII") & (df["P/VP"]>=0.8) & (df["P/VP"]<=0.9) & (df["DY (12m)"]>=0.12) & (df["% Carteira"]<media_peso)].copy()
+    df_opp = df[(df["Tipo"]=="FII") & (df["P/VP"]>=params['opp_pvp_min']) & (df["P/VP"]<=params['opp_pvp_max']) & (df["DY (12m)"]>=params['opp_dy_min']) & (df["% Carteira"]<media_peso)].copy()
     if not df_opp.empty:
         df_opp["AporteSugerido"] = np.maximum(0, (patr * media_peso) - df_opp["Valor Atual"])
-        df_opp = df_opp[df_opp["AporteSugerido"] >= 1000]
+        df_opp = df_opp[df_opp["AporteSugerido"] >= params['opp_aporte_min']]
         df_opp = df_opp.sort_values(by=["P/VP", "DY (12m)", "AporteSugerido"], ascending=[True, False, False]).head(4)
     
     if not df_opp.empty and not st.session_state.get('privacy_mode'):
@@ -614,7 +666,7 @@ if not df.empty:
     # ALERTAS
     df_alert = df[(df["Tipo"]=="FII") & ((df["P/VP"]>1.1) | (df["DY (12m)"]<(media_dy*0.85)) | ((df["P/VP"]<0.7) & (df["DY (12m)"]<0.08)))].copy()
     if not df_alert.empty:
-        selic_limite = selic_atual if 'selic_atual' in locals() else get_selic_meta()
+        selic_limite = selic_utilizada if selic_utilizada > 0 else selic_atual
 
         def _classificar_risco(row):
             motivos = []
@@ -622,9 +674,9 @@ if not df.empty:
             threshold_yield = media_dy * 0.85
             if selic_limite > 0:
                 if setor_eh_tijolo(row.get("Setor", "")):
-                    threshold_yield = max(threshold_yield, selic_limite * 0.60)
+                    threshold_yield = max(threshold_yield, selic_limite * params['radar_tijolo_pct'])
                 else:
-                    threshold_yield = max(threshold_yield, selic_limite * 0.80)
+                    threshold_yield = max(threshold_yield, selic_limite * params['radar_outros_pct'])
             if row["DY (12m)"] < threshold_yield: motivos.append("Baixo Yield")
             if row["P/VP"] < 0.7 and row["DY (12m)"] < 0.08: motivos.append("Armadilha")
             if "Baixo Yield" in motivos and "Armadilha" in motivos:
