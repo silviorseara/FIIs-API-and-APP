@@ -111,14 +111,32 @@ def get_ipca_acumulado_12m():
 
 @st.cache_data(ttl=86400)
 def get_selic_meta():
+    # Fonte principal: BrasilAPI (taxas/v1)
     try:
-        url = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json"
-        resp = requests.get(url, timeout=5)
+        url_main = "https://brasilapi.com.br/api/taxas/v1"
+        resp = requests.get(url_main, timeout=5, headers={"User-Agent": "CarteiraPro/1.0"})
+        if resp.status_code == 200:
+            dados = resp.json()
+            if isinstance(dados, list):
+                for item in dados:
+                    nome = str(item.get("nome", "")).upper()
+                    valor = item.get("valor")
+                    if "SELIC" in nome and isinstance(valor, (int, float)):
+                        return float(valor) / 100
+    except Exception:
+        pass
+
+    # Fallback: API BCB oficial (pode exigir permissões especiais em algumas redes)
+    try:
+        url_bcb = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json"
+        headers = {"User-Agent": "CarteiraPro/1.0", "Accept": "application/json"}
+        resp = requests.get(url_bcb, timeout=5, headers=headers)
         if resp.status_code == 200:
             dados = resp.json()
             if dados:
                 return float(dados[0]["valor"]) / 100
-    except: pass
+    except Exception:
+        pass
     return 0.12
 
 @st.cache_data(ttl=300)
