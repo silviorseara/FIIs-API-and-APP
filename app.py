@@ -462,7 +462,7 @@ with st.sidebar:
     params_defaults = {
         "selic_custom": selic_atual,
         "opp_pvp_min": 0.80,
-        "opp_pvp_max": 0.90,
+        "opp_pvp_max": 0.99,
         "opp_dy_min": 0.12,
         "opp_aporte_min": 1000.0,
         "radar_tijolo_pct": 0.60,
@@ -476,24 +476,75 @@ with st.sidebar:
 
     st.divider()
     st.subheader("⚙️ Parâmetros")
-    selic_input = st.number_input("SELIC utilizada (%)", value=float(params['selic_custom'] * 100), step=0.25, min_value=0.0, max_value=100.0)
+    st.caption("Ajuste as referências que alimentam as recomendações de compra e os alertas do radar.")
+    selic_input = st.number_input(
+        "SELIC utilizada (%)",
+        value=float(params['selic_custom'] * 100),
+        step=0.25,
+        min_value=0.0,
+        max_value=100.0,
+        help="Informe a taxa SELIC anualizada que servirá como benchmark para os filtros de DY."
+    )
     params['selic_custom'] = selic_input / 100 if selic_input else 0.0
 
     with st.expander("Filtros de oportunidades"):
+        st.caption("Define o intervalo de P/VP analisado e o mínimo de DY e aporte para sugerir novas compras.")
         c_op1, c_op2 = st.columns(2)
-        params['opp_pvp_min'] = c_op1.number_input("P/VP mínimo", value=float(params['opp_pvp_min']), min_value=0.0, max_value=2.0, step=0.05)
-        params['opp_pvp_max'] = c_op2.number_input("P/VP máximo", value=float(params['opp_pvp_max']), min_value=0.0, max_value=2.0, step=0.05)
+        params['opp_pvp_min'] = c_op1.number_input(
+            "P/VP mínimo",
+            value=float(params['opp_pvp_min']),
+            min_value=0.0,
+            max_value=2.0,
+            step=0.05,
+            help="FII precisa negociar abaixo deste múltiplo para ser considerado desconto."
+        )
+        params['opp_pvp_max'] = c_op2.number_input(
+            "P/VP máximo",
+            value=float(params['opp_pvp_max']),
+            min_value=0.0,
+            max_value=2.0,
+            step=0.05,
+            help="Valor teto para o múltiplo P/VP nas oportunidades; 0,99 indica preferência por fundos abaixo do valor patrimonial."
+        )
         if params['opp_pvp_max'] < params['opp_pvp_min']:
             params['opp_pvp_max'] = params['opp_pvp_min']
         c_op3, c_op4 = st.columns(2)
-        dy_min_input = c_op3.number_input("DY mínimo (%)", value=float(params['opp_dy_min'] * 100), min_value=0.0, max_value=100.0, step=0.25)
+        dy_min_input = c_op3.number_input(
+            "DY mínimo (%)",
+            value=float(params['opp_dy_min'] * 100),
+            min_value=0.0,
+            max_value=100.0,
+            step=0.25,
+            help="Dividend Yield anual mínimo para um ativo ser sugerido na seção de oportunidades."
+        )
         params['opp_dy_min'] = dy_min_input / 100 if dy_min_input else 0.0
-        params['opp_aporte_min'] = c_op4.number_input("Aporte mínimo (R$)", value=float(params['opp_aporte_min']), min_value=0.0, step=100.0)
+        params['opp_aporte_min'] = c_op4.number_input(
+            "Aporte mínimo (R$)",
+            value=float(params['opp_aporte_min']),
+            min_value=0.0,
+            step=100.0,
+            help="Aporte sugerido precisa ser igual ou acima deste valor para aparecer nas oportunidades."
+        )
 
-    with st.expander("Critérios do radar"):
+    with st.expander("Critérios do radar de atenção"):
+        st.caption("Determina o piso de DY (proporcional à SELIC) para sinalizar fundos que podem estar pouco competitivos.")
         c_rd1, c_rd2 = st.columns(2)
-        tijolo_pct_input = c_rd1.number_input("Tijolo: % da SELIC", value=float(params['radar_tijolo_pct'] * 100), min_value=0.0, max_value=100.0, step=5.0)
-        outros_pct_input = c_rd2.number_input("Outros: % da SELIC", value=float(params['radar_outros_pct'] * 100), min_value=0.0, max_value=100.0, step=5.0)
+        tijolo_pct_input = c_rd1.number_input(
+            "Tijolo • DY mínimo (% da SELIC)",
+            value=float(params['radar_tijolo_pct'] * 100),
+            min_value=0.0,
+            max_value=100.0,
+            step=5.0,
+            help="Percentual da SELIC exigido para fundos de tijolo (shoppings, lajes etc.)."
+        )
+        outros_pct_input = c_rd2.number_input(
+            "Papéis • DY mínimo (% da SELIC)",
+            value=float(params['radar_outros_pct'] * 100),
+            min_value=0.0,
+            max_value=100.0,
+            step=5.0,
+            help="Percentual da SELIC exigido para fundos de papel (CRI, recebíveis e híbridos)."
+        )
         params['radar_tijolo_pct'] = tijolo_pct_input / 100 if tijolo_pct_input else 0.0
         params['radar_outros_pct'] = outros_pct_input / 100 if outros_pct_input else 0.0
     
@@ -667,31 +718,57 @@ if not df.empty:
         st.divider()
 
     # ALERTAS
-    df_alert = df[(df["Tipo"]=="FII") & ((df["P/VP"]>1.1) | (df["DY (12m)"]<(media_dy*0.85)) | ((df["P/VP"]<0.7) & (df["DY (12m)"]<0.08)))].copy()
+    df_alert = df[df["Tipo"]=="FII"].copy()
     if not df_alert.empty:
         selic_limite = selic_utilizada if selic_utilizada > 0 else selic_atual
 
         def _classificar_risco(row):
             motivos = []
-            if row["P/VP"] > 1.1: motivos.append("Caro")
+            if row["P/VP"] > 1.1:
+                motivos.append("Caro")
+
             threshold_yield = media_dy * 0.85
             if selic_limite > 0:
                 if setor_eh_tijolo(row.get("Setor", "")):
                     threshold_yield = max(threshold_yield, selic_limite * params['radar_tijolo_pct'])
                 else:
                     threshold_yield = max(threshold_yield, selic_limite * params['radar_outros_pct'])
-            if row["DY (12m)"] < threshold_yield: motivos.append("Baixo Yield")
-            if row["P/VP"] < 0.7 and row["DY (12m)"] < 0.08: motivos.append("Armadilha")
+
+            if row["DY (12m)"] < threshold_yield:
+                motivos.append("Baixo Yield")
+
+            if row["P/VP"] < 0.7 and row["DY (12m)"] < 0.08:
+                motivos.append("Armadilha")
+
+            if not motivos:
+                return pd.Series({
+                    "MotivoTexto": "Observação",
+                    "RiscoOrdem": 99,
+                    "EtiquetaRisco": "Observação"
+                })
+
             if "Baixo Yield" in motivos and "Armadilha" in motivos:
-                risco_ordem = 0; risco_txt = "Baixo Yield + Armadilha"
+                risco_ordem = 0
+                risco_txt = "Baixo Yield + Armadilha"
             elif "Baixo Yield" in motivos:
-                risco_ordem = 1; risco_txt = "Baixo Yield"
+                risco_ordem = 1
+                risco_txt = "Baixo Yield"
+            elif "Caro" in motivos:
+                risco_ordem = 2
+                risco_txt = "Caro"
             else:
-                risco_ordem = 2; risco_txt = " + ".join(motivos) if motivos else "Observação"
-            return pd.Series({"MotivoTexto": " + ".join(motivos) if motivos else "Observação", "RiscoOrdem": risco_ordem, "EtiquetaRisco": risco_txt})
+                risco_ordem = 3
+                risco_txt = " + ".join(motivos)
+
+            return pd.Series({
+                "MotivoTexto": " + ".join(motivos),
+                "RiscoOrdem": risco_ordem,
+                "EtiquetaRisco": risco_txt
+            })
 
         df_alert[["MotivoTexto", "RiscoOrdem", "EtiquetaRisco"]] = df_alert.apply(_classificar_risco, axis=1)
-        df_alert = df_alert.sort_values(by=["Valor Atual", "RiscoOrdem"], ascending=[False, True]).head(4)
+        df_alert = df_alert[df_alert["MotivoTexto"] != "Observação"]
+        df_alert = df_alert.sort_values(by=["RiscoOrdem", "Valor Atual"], ascending=[True, False]).head(4)
     if not df_alert.empty and not st.session_state.get('privacy_mode'):
         st.subheader("⚠️ Radar de Atenção")
         cols = st.columns(len(df_alert))
