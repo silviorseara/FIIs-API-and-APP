@@ -20,7 +20,7 @@ from gspread.exceptions import APIError, WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
 
 # ==========================================
-# ⚙️ CONFIGURAÇÃO
+# ⚙️ CONFIGURAÇÃO (atualização em 11.02.2026 em função do email '[GitHub] The "Relatório Diário Carteira" workflow in silviorseara/FIIs-API-and-APP will be disabled soon')
 # ==========================================
 st.set_page_config(page_title="Carteira Pro", layout="wide", page_icon="💠")
 
