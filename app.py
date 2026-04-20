@@ -452,7 +452,7 @@ def gerar_grafico_evolucao(df_base, periodo_label, benchmarks):
     componentes = []
     for ticker, qtd in quantidades.items():
         if ticker in dados.columns:
-            serie = dados[ticker].copy().fillna(method="ffill").fillna(method="bfill")
+            serie = dados[ticker].copy().ffill().bfill()
             componentes.append(serie * qtd)
 
     if not componentes:
@@ -467,7 +467,7 @@ def gerar_grafico_evolucao(df_base, periodo_label, benchmarks):
 
     for bench_nome in bench_map.keys():
         if bench_nome in dados.columns:
-            serie_bench = dados[bench_nome].reindex(plot_df.index).fillna(method="ffill").dropna()
+            serie_bench = dados[bench_nome].reindex(plot_df.index).ffill().dropna()
             if not serie_bench.empty:
                 plot_df[bench_nome] = serie_bench
 
@@ -484,7 +484,7 @@ def gerar_grafico_evolucao(df_base, periodo_label, benchmarks):
 
     plot_norm = pd.DataFrame(index=plot_df.index)
     for coluna in plot_df.columns:
-        serie = plot_df[coluna].copy().fillna(method="ffill")
+        serie = plot_df[coluna].copy().ffill()
         serie.dropna(inplace=True)
         if serie.empty:
             continue
@@ -492,7 +492,7 @@ def gerar_grafico_evolucao(df_base, periodo_label, benchmarks):
         if base == 0:
             continue
         normalizada = (serie / base - 1) * 100
-        normalizada = normalizada.reindex(plot_df.index).fillna(method="ffill")
+        normalizada = normalizada.reindex(plot_df.index).ffill()
         plot_norm[coluna] = normalizada
 
     if plot_norm.empty:
